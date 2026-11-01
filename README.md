@@ -233,8 +233,9 @@ cd CoreLib && ./gradlew build publishToMavenLocal
 
 `client/` 是根构建的子项目，Fabric Loom 在根项目上统一声明。
 
-GitHub Actions（`.github/workflows/build.yml`）每次推送都会照上面的步骤构建，两个 jar 作为 Artifacts 上传；
-推送 `v*` 标签（如 `v1.0.0`）时自动建 Release 并附上两个 jar。
+GitHub Actions（`.github/workflows/build.yml`）每次推送都会照上面的步骤构建，两个 jar 作为 Artifacts 上传。
+发版不用手动打标签：改了 `build.gradle.kts` 里的插件版本号推到 master，GitHub 上还没有这个版本的 Release 时，
+会自动打 `v<版本号>` 标签并发布，附上两个 jar。
 
 </details>
 
