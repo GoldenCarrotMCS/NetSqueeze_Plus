@@ -35,6 +35,8 @@ NotEnoughBandwidth(只有 NeoForge、两端必装、作者明确不做 Bukkit �
   处理玩家包、区域/实体调度器里发的包一包一 flush。2026-11-01 `/nsq flushes` 实测(233 人):每人每 tick 15 次,
   95.3% 的 flush 只带 1 个包,TCP/IP 头约占下行三分之一(原先以为每 tick 一次、包头只占 2%~3%,是错的)。
   已在 Canvas 本地补丁 LOCAL-PATCHES #25 把暂停扩到整个区域 tick;非 tick 线程(TAB 之类)发的包仍立即 flush。
+  上线稳态(247 人):每人每 tick 约 1.2 次 flush,原版下行(含包头)75.0 → 52.0 Mbps;影子压缩在此基础上 22.5 Mbps,
+  即装 mod 还能再省 57%,耗时约 0.7 个核心。这是决定做不做客户端 mod 时的基准。
 - 攒帧边界直接用这个现成的 flush,不另加定时器、不加延迟。
 - 选 JDK Deflater 而非 Zstd:两端零 native 依赖,每连接约 300 KB(Zstd 大窗口 NEB 默认每人 8 MB)。
 
