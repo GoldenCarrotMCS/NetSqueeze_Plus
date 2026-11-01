@@ -3,6 +3,7 @@ package me.albert.netsqueeze.netty
 import io.netty.channel.Channel
 import me.albert.corelib.utils.registerEvents
 import me.albert.netsqueeze.instance
+import me.albert.netsqueeze.shadow.FlushProbe
 import me.albert.netsqueeze.shadow.ShadowCompressor
 import me.albert.netsqueeze.shadow.WireCounter
 import me.albert.netsqueeze.stats.ShadowStats
@@ -17,7 +18,7 @@ import org.bukkit.event.player.PlayerJoinEvent
 
 /**
  * 往每个玩家的 netty 管线里挂影子压缩和原版计数两个处理器。出站方向(从尾到头)的顺序是:
- * encoder(Via/PacketEvents 挂在它附近)→ **影子压缩** → compress → prepender → **原版计数** → encrypt。
+ * **flush 探针**(最尾)→ … → encoder(Via/PacketEvents 挂在它附近)→ **影子压缩** → compress → prepender → **原版计数** → encrypt。
  *
  * 处理器随连接关闭由 netty 自动拆掉,退服不用管;插件卸载时同步摘干净,支持 PlugManX 热重载
  * (重载后统计归零,压缩上下文重新开始)。
@@ -26,6 +27,7 @@ internal object Injector : Listener {
 
     private const val SHADOW = "netsqueeze_shadow"
     private const val WIRE = "netsqueeze_wire"
+    private const val PROBE = "netsqueeze_probe"
 
     /** 卸载时最多等多久摘完,拍脑袋定的 */
     private const val SHUTDOWN_WAIT_MS = 3000L
@@ -47,6 +49,7 @@ internal object Injector : Listener {
                 val pipeline = channel.pipeline()
                 if (pipeline.get(SHADOW) != null) pipeline.remove(SHADOW)
                 if (pipeline.get(WIRE) != null) pipeline.remove(WIRE)
+                if (pipeline.get(PROBE) != null) pipeline.remove(PROBE)
             }
         }
         // 各连接分散在几条 netty 线程上并行摘,正常几毫秒;总等待封顶,netty 线程卡死也不至于把卸载拖住
@@ -68,6 +71,8 @@ internal object Injector : Listener {
             val anchor = if (pipeline.get(HandlerNames.COMPRESS) != null) HandlerNames.COMPRESS else HandlerNames.PREPENDER
             pipeline.addAfter(anchor, SHADOW, ShadowCompressor(tally))
             pipeline.addBefore(HandlerNames.PREPENDER, WIRE, WireCounter(tally))
+            // 挂在 TailContext 前面,channel.write 进来的包最先经过它
+            pipeline.addLast(PROBE, FlushProbe())
             ShadowStats.samplePipeline = pipeline.names()
         }
     }
