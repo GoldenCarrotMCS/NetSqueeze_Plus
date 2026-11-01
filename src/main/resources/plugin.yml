@@ -7,7 +7,7 @@ depend: [ CoreLib ]
 commands:
   netsqueeze:
     description: 影子压缩统计，估算换成跨包流式压缩后下行能省多少
-    usage: /netsqueeze [players|flushes|reset|pipeline]
+    usage: /netsqueeze [players|reset|pipeline]
     aliases: [ nsq ]
     permission: netsqueeze.admin
 permissions:

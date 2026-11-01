@@ -25,9 +25,6 @@ NotEnoughBandwidth(只有 NeoForge、两端必装、作者明确不做 Bukkit �
   `Deflater`(level 6、nowrap),每次 flush 做 SYNC_FLUSH,得出"这一 tick 的包打成一帧"的压缩后大小。
 - `netsqueeze_wire`(prepender 头侧、encrypt 之前):数原版实际写进 socket 的字节。
 
-另有临时诊断 `netsqueeze_probe`(`shadow/FlushProbe`,挂管线最尾,看到的还是包对象):按每次 flush 带几个包分档、
-统计小 flush 里是什么包,`/nsq flushes` 查看,查清 flush 来源后删。
-
 `/nsq` 汇总、`/nsq players` 按人、`/nsq reset` 清零(不重置压缩上下文)、`/nsq pipeline` 看处理器位置。
 
 背景事实(决定方案的,别重查):

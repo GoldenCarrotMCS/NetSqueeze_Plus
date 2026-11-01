@@ -7,12 +7,12 @@ import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 
-/** `/nsq` 展示端,纯读 [ShadowStats] 和 [FlushStats] */
+/** `/nsq` 展示端,纯读 [ShadowStats] */
 internal object StatsCommand : CommandExecutor, TabCompleter {
 
     private const val TOP = 15
 
-    private val SUBS = listOf("players", "flushes", "reset", "pipeline")
+    private val SUBS = listOf("players", "reset", "pipeline")
 
     fun init() {
         val command = instance.getCommand("netsqueeze") ?: return
@@ -25,18 +25,12 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
 
         if (sub == "reset") {
             ShadowStats.reset()
-            FlushStats.reset()
             sender.sendMessage("§a统计已清零§7，压缩上下文不动，跑几分钟后 §f/nsq §7看结果")
             return true
         }
 
         if (sub == "players") {
             sendPlayers(sender)
-            return true
-        }
-
-        if (sub == "flushes") {
-            sendFlushes(sender)
             return true
         }
 
@@ -103,44 +97,6 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
             val shadow = t.shadow.sum()
             sender.sendMessage(
                 "§7${i + 1}. §f${t.name} §7原版 §f${size(wire)} §7→ 影子 §f${size(shadow)} §7(少 §f${percent(wire - shadow, wire)}§7)"
-            )
-        }
-    }
-
-    private fun sendFlushes(sender: CommandSender) {
-        val f = FlushStats
-        val seconds = elapsedSeconds()
-        val counts = f.buckets.map { it.sum() }
-        val flushes = counts.sum()
-        val packets = f.packets.sum()
-        val online = Bukkit.getOnlinePlayers().size.coerceAtLeast(1)
-
-        sender.sendMessage("§6--------- NetSqueeze flush 来源(尾侧探针) ---------")
-        if (flushes == 0L) {
-            sender.sendMessage("§7还没有数据")
-            return
-        }
-        sender.sendMessage(
-            "§7flush §f${count(flushes / seconds)}§7/s(每人每 tick §f${"%.1f".format(flushes / seconds / online / 20)} §7次)" +
-                "，空 flush §f${count(f.emptyFlushes.sum() / seconds)}§7/s"
-        )
-        sender.sendMessage(
-            "§7尾侧写入 §f${count(packets / seconds)} §7包/s(影子侧 §f${count(ShadowStats.packets.sum() / seconds)}§7，" +
-                "差的是中间处理器自己补发或拆分的)"
-        )
-        sender.sendMessage(
-            "§7每次带几个包 " + f.BUCKET_LABELS.indices.joinToString(" ") {
-                "§f${f.BUCKET_LABELS[it]}§7:§f${percent(counts[it], flushes)}"
-            }
-        )
-
-        val small = f.smallByType.entries.map { it.key to it.value.sum() }.sortedByDescending { it.second }.take(TOP)
-        val smallTotal = f.smallByType.values.sumOf { it.sum() }
-        sender.sendMessage("§7小 flush(≤${f.SMALL} 包)里的包，后面是这类包有多少走了小 flush:")
-        small.forEachIndexed { i, (type, n) ->
-            val total = f.byType[type]?.sum() ?: n
-            sender.sendMessage(
-                "§7${i + 1}. §f${f.label(type)} §f${count(n / seconds)}§7/s 占 §f${percent(n, smallTotal)}§7，该类 §f${percent(n, total)}"
             )
         }
     }
