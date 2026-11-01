@@ -1,0 +1,127 @@
+package me.albert.netsqueeze.stream
+
+import io.netty.buffer.ByteBuf
+import io.netty.channel.ChannelFuture
+import io.netty.channel.ChannelHandlerContext
+import io.netty.channel.ChannelOutboundHandlerAdapter
+import io.netty.channel.ChannelPromise
+import io.netty.util.ReferenceCountUtil
+import io.netty.util.concurrent.PromiseNotifier
+import me.albert.netsqueeze.stats.PlayerTally
+import me.albert.netsqueeze.stats.StreamStats
+import net.minecraft.network.HandlerNames
+import java.nio.channels.ClosedChannelException
+
+/**
+ * 真流式压缩(装了 mod 的连接):挂的位置和影子压缩一样(compress 尾侧),看到的是 Via/PacketEvents 处理完的单个包。
+ * 包不再往 compress 传,喂进本连接的 [FrameDeflater];每次 flush 收成一帧,从 prepender 的 context 往下写,
+ * 绕过原版的逐包压缩和长度前缀。compress、prepender 留在管线里不拆:Via、PacketEvents 按名字找它们。
+ *
+ * 原包的 promise 攒着,等所在那一帧写完一起完成(断线包带"发完再关"的监听,不能提前完成)。
+ * 全部方法都在这条连接的 netty 线程上跑。出错退不回原版格式(客户端已经切了),只能断开。
+ */
+internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
+
+    /** 配置阶段切换时还不知道是谁,进服后由 Injector 绑上 */
+    @Volatile
+    var tally: PlayerTally? = null
+
+    private lateinit var deflater: FrameDeflater
+    private val promises = ArrayList<ChannelPromise>()
+    private var pendingNanos = 0L
+    private var closed = false
+
+    override fun handlerAdded(ctx: ChannelHandlerContext) {
+        deflater = FrameDeflater(ctx.alloc())
+        StreamStats.active.incrementAndGet()
+    }
+
+    override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
+        if (closed) {
+            ReferenceCountUtil.release(msg)
+            promise.tryFailure(ClosedChannelException())
+            return
+        }
+        if (msg !is ByteBuf) {
+            val error = IllegalStateException("流式压缩位置收到非 ByteBuf 的出站消息: ${msg.javaClass.name}")
+            ReferenceCountUtil.release(msg)
+            promise.tryFailure(error)
+            fail(ctx, error)
+            return
+        }
+        if (!msg.isReadable) {
+            msg.release()
+            promise.trySuccess()
+            return
+        }
+
+        val start = System.nanoTime()
+        try {
+            deflater.feed(msg)
+        } catch (e: Throwable) {
+            promise.tryFailure(e)
+            fail(ctx, e)
+            return
+        } finally {
+            msg.release()
+        }
+        pendingNanos += System.nanoTime() - start
+        if (!promise.isVoid) promises += promise
+    }
+
+    override fun flush(ctx: ChannelHandlerContext) {
+        if (!closed && deflater.pendingPackets > 0) {
+            try {
+                emit(ctx)
+            } catch (e: Throwable) {
+                fail(ctx, e)
+            }
+        }
+        ctx.flush()
+    }
+
+    override fun handlerRemoved(ctx: ChannelHandlerContext) {
+        StreamStats.active.decrementAndGet()
+        // 连接关闭时 netty 拆管线也会走这里,deflate 流占着原生内存,必须关
+        if (closed) return
+        closed = true
+        deflater.close()
+        failPromises(ClosedChannelException())
+    }
+
+    private fun emit(ctx: ChannelHandlerContext) {
+        val start = System.nanoTime()
+        val raw = deflater.pendingRaw
+        val packets = deflater.pendingPackets
+        val frame = deflater.finish() ?: return
+        val size = frame.readableBytes().toLong()
+        // prepender 的 context 往下写 = 从 prepender 的下一个(encrypt / socket 方向)开始,compress 和 prepender 都不经过
+        val target = ctx.pipeline().context(HandlerNames.PREPENDER) ?: ctx
+        target.write(frame, framePromise(ctx))
+        pendingNanos += System.nanoTime() - start
+        StreamStats.record(tally, raw, size, packets, pendingNanos)
+        pendingNanos = 0
+    }
+
+    private fun framePromise(ctx: ChannelHandlerContext): ChannelPromise {
+        if (promises.isEmpty()) return ctx.voidPromise()
+        val promise = ctx.newPromise()
+        promise.addListener(PromiseNotifier<Void, ChannelFuture>(*promises.toTypedArray()))
+        promises.clear()
+        return promise
+    }
+
+    private fun fail(ctx: ChannelHandlerContext, e: Throwable) {
+        if (closed) return
+        closed = true
+        deflater.close()
+        failPromises(e)
+        StreamStats.recordFailure(tally?.name ?: ctx.channel().remoteAddress().toString(), e)
+        ctx.channel().close()
+    }
+
+    private fun failPromises(e: Throwable) {
+        promises.forEach { it.tryFailure(e) }
+        promises.clear()
+    }
+}

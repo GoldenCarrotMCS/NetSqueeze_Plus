@@ -16,11 +16,17 @@ internal const val TCP_IP_HEADER = 40
 
 internal fun segmentsOf(bytes: Long): Long = (bytes + MSS - 1) / MSS
 
-/** 一个玩家的累计量。两个处理器都在这条连接的 netty 线程上写,命令线程读 */
+/**
+ * 一个玩家的累计量。处理器都在这条连接的 netty 线程上写,命令线程读。
+ * 装了 mod 的([streaming])没有影子一栏:raw 是原始包,wire 是真压缩后实际发出去的
+ */
 internal class PlayerTally(val name: String) {
     val raw = LongAdder()
     val wire = LongAdder()
     val shadow = LongAdder()
+
+    @Volatile
+    var streaming = false
 
     fun reset() {
         raw.reset()
