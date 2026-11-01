@@ -62,6 +62,10 @@ internal object ShadowStats {
     @Volatile
     var samplePipeline: List<String> = emptyList()
 
+    /** 最近一个装 mod 的玩家进服时的管线,核对 Via/PacketEvents/Grim 的处理器是否都在真压缩的尾侧 */
+    @Volatile
+    var sampleStreamPipeline: List<String> = emptyList()
+
     val players = ConcurrentHashMap<UUID, PlayerTally>()
 
     private val failureLogged = AtomicBoolean()

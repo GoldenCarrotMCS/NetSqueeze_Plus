@@ -122,6 +122,7 @@ internal object Injector : Listener {
             if (stream != null) {
                 stream.tally = tally
                 tally.streaming = true
+                ShadowStats.sampleStreamPipeline = pipeline.names()
                 return@execute
             }
             if (pipeline.get(SHADOW) != null) return@execute

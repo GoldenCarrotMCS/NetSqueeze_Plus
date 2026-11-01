@@ -18,6 +18,7 @@ import java.nio.channels.ClosedChannelException
  * 绕过原版的逐包压缩和长度前缀。compress、prepender 留在管线里不拆:Via、PacketEvents 按名字找它们。
  *
  * 原包的 promise 攒着,等所在那一帧写完一起完成(断线包带"发完再关"的监听,不能提前完成)。
+ * 不是 ByteBuf 的出站消息(原版切协议的配置任务等)原样往下传。
  * 全部方法都在这条连接的 netty 线程上跑。出错退不回原版格式(客户端已经切了),只能断开。
  */
 internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
@@ -43,10 +44,10 @@ internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
             return
         }
         if (msg !is ByteBuf) {
-            val error = IllegalStateException("流式压缩位置收到非 ByteBuf 的出站消息: ${msg.javaClass.name}")
-            ReferenceCountUtil.release(msg)
-            promise.tryFailure(error)
-            fail(ctx, error)
+            // 不是包字节的原样放过,和 compress/prepender 一样。典型是原版切入站协议时从出站方向写的配置任务
+            // (UnconfiguredPipelineHandler 的 lambda),要一路走到头侧 decoder 位置的 inbound_config 才被吃掉。
+            // 先把攒着的包收成一帧写出去,顺序才和写入顺序一致
+            passThrough(ctx, msg, promise)
             return
         }
         if (!msg.isReadable) {
@@ -87,6 +88,20 @@ internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
         closed = true
         deflater.close()
         failPromises(ClosedChannelException())
+    }
+
+    private fun passThrough(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
+        if (deflater.pendingPackets > 0) {
+            try {
+                emit(ctx)
+            } catch (e: Throwable) {
+                ReferenceCountUtil.release(msg)
+                promise.tryFailure(e)
+                fail(ctx, e)
+                return
+            }
+        }
+        ctx.write(msg, promise)
     }
 
     private fun emit(ctx: ChannelHandlerContext) {

@@ -36,13 +36,8 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
         }
 
         if (sub == "pipeline") {
-            val names = ShadowStats.samplePipeline
-            if (names.isEmpty()) {
-                sender.sendMessage("§c还没有注入过任何连接")
-                return true
-            }
-            sender.sendMessage("§7最近一次注入后的管线(头 → 尾，出站从尾往头走):")
-            sender.sendMessage("§f" + names.joinToString(" §7→ §f"))
+            sendPipeline(sender, "没装 mod", ShadowStats.samplePipeline)
+            sendPipeline(sender, "装 mod", ShadowStats.sampleStreamPipeline)
             return true
         }
 
@@ -130,6 +125,15 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
                 "§7${i + 1}. §f${t.name} §7原版 §f${size(wire)} §7→ 影子 §f${size(shadow)} §7(少 §f${percent(wire - shadow, wire)}§7)"
             )
         }
+    }
+
+    private fun sendPipeline(sender: CommandSender, label: String, names: List<String>) {
+        if (names.isEmpty()) {
+            sender.sendMessage("§7$label：还没有玩家进服")
+            return
+        }
+        sender.sendMessage("§7$label 的玩家最近一次进服时的管线(头 → 尾，出站从尾往头走):")
+        sender.sendMessage("§f" + names.joinToString(" §7→ §f"))
     }
 
     private fun elapsedSeconds() = ((System.currentTimeMillis() - ShadowStats.since) / 1000.0).coerceAtLeast(1.0)
