@@ -24,6 +24,17 @@ internal class PlayerTally(val name: String) {
 
     @Volatile
     var streaming = false
+        private set
+
+    /**
+     * 每次进服调:这次和上次装没装 mod 不一样就清零重来。表按 UUID 存、下线不清,同一个人换着客户端进,
+     * 两种口径(raw 只有装 mod 才量)攒进同一份,排行就会出现"原始 0 B → 出网 600 MB"这种数
+     */
+    fun startSession(streaming: Boolean) {
+        if (this.streaming == streaming) return
+        reset()
+        this.streaming = streaming
+    }
 
     fun reset() {
         raw.reset()

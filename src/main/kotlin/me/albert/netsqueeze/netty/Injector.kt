@@ -142,9 +142,9 @@ internal object Injector : Listener {
             // 握手只在配置阶段,到进服还没握的就是没装 mod
             removeIfPresent(pipeline, HELLO)
             val stream = pipeline.get(STREAM) as? StreamCompressor
+            tally.startSession(stream != null)
             if (stream != null) {
                 stream.tally = tally
-                tally.streaming = true
                 TrafficStats.sampleStreamPipeline = pipeline.names()
                 return@execute
             }
