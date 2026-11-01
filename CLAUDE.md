@@ -68,4 +68,8 @@ NoClassDefFoundError 踢人)。已切到真压缩的连接交接不了,先走这
   即装 mod 还能再省 57%,耗时约 0.7 个核心(9950X 的 4% 左右)。
 - 攒帧边界直接用这个现成的 flush,不另加定时器、不加延迟。
 - 选 JDK Deflater 而非 Zstd:两端零 native 依赖,每连接约 300 KB(Zstd 大窗口 NEB 默认每人 8 MB)。
-- 玩家客户端版本以 26.1.2 为主(`viaversion list`),mod 先只做这一个版本。
+- 玩家客户端版本以 26.1.2 为主(`viaversion list`)。mod 按 26.1.2 编一个 jar,声明支持 `>=26.1 <26.4`:
+  2026-11-01 用 javap 逐个核对过 26.1、26.1.1、26.1.2、26.2、26.3 五个正式版,mod 用到的 MC 类/成员(19 项)、
+  setupCompression 把 decompress/compress 挂在 splitter/prepender 后面、建连接走 configurePacketHandler、
+  handleLoginFinished 先切出站协议再发 brand,全部一致。出新版本(26.4 起)先照这几项重核再放宽范围。
+  1.20~1.21.11 原版混淆、没有统一的配置阶段,要改成纯字节层识别 enable / 借 brand 包发 hello 再分两个 jar,评估过没做。
