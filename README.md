@@ -93,7 +93,7 @@ flowchart LR
         c1["实体移动"] --> D
         c2["声音"] --> D
         c3["区块"] --> D
-        D["共享 deflate 流<br/>记得之前发过的所有内容"] --> F["一帧 · SYNC_FLUSH 收尾"]
+        D["共享 deflate 流<br/>记得最近发过的 32 KB"] --> F["一帧 · SYNC_FLUSH 收尾"]
     end
     V ~~~ N
     classDef old fill:#ffebe9,stroke:#cf222e,color:#1f2328
