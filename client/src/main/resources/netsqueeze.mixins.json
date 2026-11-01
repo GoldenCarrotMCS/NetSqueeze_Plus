@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "me.albert.netsqueeze.client.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "ClientHandshakePacketListenerImplMixin",
+    "ConnectionAccessor",
+    "ConnectionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
