@@ -31,4 +31,6 @@ NotEnoughBandwidth(只有 NeoForge、两端必装、作者明确不做 Bukkit �
 - 攒帧边界直接用这个现成的 flush,不另加定时器、不加延迟。
 - 选 JDK Deflater 而非 Zstd:两端零 native 依赖,每连接约 300 KB(Zstd 大窗口 NEB 默认每人 8 MB)。
 
-插件要在启动时装,不支持 PlugManX 热重载(卸载会摘处理器,但别指望热重载)。
+支持 PlugManX 热重载:`Injector.shutdown` 同步等各 netty 线程把处理器摘完才返回(旧类加载器关闭后旧处理器
+再处理包会 NoClassDefFoundError 踢人),重载后统计归零。以后加了真实切换协议,热重载就得把已切换的连接
+换回原版格式(或直接踢下线重连),到时再定。
