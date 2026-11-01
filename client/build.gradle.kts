@@ -1,5 +1,5 @@
 plugins {
-    id("net.fabricmc.fabric-loom") version "1.15-SNAPSHOT"
+    id("net.fabricmc.fabric-loom")
 }
 
 group = "me.albert"
@@ -9,9 +9,13 @@ base {
     archivesName = "NetSqueeze-Client"
 }
 
+// 和 Wurst 的 26.1.2 版本一致(26.x 起原版不混淆,用不带映射的 fabric-loom)
+val minecraftVersion = "26.1.2"
+val loaderVersion = "0.19.3"
+
 dependencies {
-    minecraft("com.mojang:minecraft:${property("minecraft_version")}")
-    implementation("net.fabricmc:fabric-loader:${property("loader_version")}")
+    minecraft("com.mojang:minecraft:$minecraftVersion")
+    implementation("net.fabricmc:fabric-loader:$loaderVersion")
 }
 
 java {

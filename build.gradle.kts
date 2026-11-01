@@ -4,6 +4,8 @@ plugins {
     kotlin("jvm") version "2.3.20"
     id("com.gradleup.shadow") version "9.4.1"
     id("io.papermc.paperweight.userdev") version "2.0.0-beta.21"
+    // client 子项目用;插件统一在根上声明,免得和 paperweight 分在两个类加载器里打架
+    id("net.fabricmc.fabric-loom") version "1.15-SNAPSHOT" apply false
 }
 
 group = "me.albert"

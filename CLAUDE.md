@@ -9,9 +9,12 @@ NotEnoughBandwidth(只有 NeoForge、两端必装、作者明确不做 Bukkit �
 
 ```
 .\gradlew.bat compileKotlin -q --console=plain          # 插件编译校验(改完必跑)
-.\gradlew.bat shadowJar                                 # 插件打包
-cd client; .\gradlew.bat compileJava --console=plain    # 客户端 mod 编译校验(独立 Gradle 构建)
+.\gradlew.bat :client:compileJava -q --console=plain    # 客户端 mod 编译校验
+.\gradlew.bat build                                     # 一次出两个包:build/libs/*-all.jar 和 client/build/libs/
 ```
+
+client 是根构建的子项目(`settings.gradle.kts` 里 include),打开根目录 IDEA 就能看到。Fabric Loom 在根
+`plugins` 里 `apply false` 声明、子项目只 apply,和 paperweight 放在同一个类加载器里,别挪到子项目里单独写版本。
 
 约定:编译通过后直接 `git commit`(中文提交信息),不 push。dev bundle 钉死在本机已缓存的 `26.1.2.build.8-stable`,
 别改回 `+`(解析到新 build 会触发整份反编译)。客户端版本组合抄 Wurst 当年的 26.1.2(loom 1.15、loader 0.19),
