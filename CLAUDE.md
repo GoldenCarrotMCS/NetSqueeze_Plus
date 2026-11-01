@@ -31,9 +31,10 @@ NotEnoughBandwidth(只有 NeoForge、两端必装、作者明确不做 Bukkit �
 `/nsq` 汇总、`/nsq players` 按人、`/nsq reset` 清零(不重置压缩上下文)、`/nsq pipeline` 看处理器位置。
 
 背景事实(决定方案的,别重查):
-- Canvas 已经在每个区域 tick 暂停本区域玩家的 flush、tick 末统一 flush 一次
-  (`MinecraftServer` 的 "optimize flush calls with region threading"),所以服务端单方面攒包只能省 TCP/IP 头,
-  估算 2%~3%,不值得;要省就得换压缩格式,必须客户端配合。
+- Canvas 上游的 "optimize flush calls with region threading" 只在 `tickChildren` 前后暂停 flush,前面的 drainTasks、
+  处理玩家包、区域/实体调度器里发的包一包一 flush。2026-11-01 `/nsq flushes` 实测(233 人):每人每 tick 15 次,
+  95.3% 的 flush 只带 1 个包,TCP/IP 头约占下行三分之一(原先以为每 tick 一次、包头只占 2%~3%,是错的)。
+  已在 Canvas 本地补丁 LOCAL-PATCHES #25 把暂停扩到整个区域 tick;非 tick 线程(TAB 之类)发的包仍立即 flush。
 - 攒帧边界直接用这个现成的 flush,不另加定时器、不加延迟。
 - 选 JDK Deflater 而非 Zstd:两端零 native 依赖,每连接约 300 KB(Zstd 大窗口 NEB 默认每人 8 MB)。
 
