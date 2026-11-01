@@ -16,7 +16,10 @@ NotEnoughBandwidth(只有 NeoForge、两端必装、作者明确不做 Bukkit �
 
 ## 现状:影子模式(只统计,不改任何发出去的字节)
 
-每个玩家的 netty 管线挂两个出站处理器(`shadow/Injector`):
+代码分包:`netty/`(管线注入,将来真协议的处理器也从这里挂)、`shadow/`(影子压缩和原版计数两个处理器)、
+`stats/`(累计量汇总和 `/nsq` 展示)。
+
+每个玩家的 netty 管线挂两个出站处理器(`netty/Injector`):
 
 - `netsqueeze_shadow`(compress 尾侧,出站先经过它):把 Via/PacketEvents 处理完的单个包喂进本连接独享的
   `Deflater`(level 6、nowrap),每次 flush 做 SYNC_FLUSH,得出"这一 tick 的包打成一帧"的压缩后大小。

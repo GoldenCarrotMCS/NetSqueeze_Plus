@@ -4,7 +4,17 @@ import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelOutboundHandlerAdapter
 import io.netty.channel.ChannelPromise
+import me.albert.netsqueeze.stats.PlayerTally
+import me.albert.netsqueeze.stats.ShadowStats
 import java.util.zip.Deflater
+
+private fun varIntSize(value: Long): Int = when {
+    value < 1L shl 7 -> 1
+    value < 1L shl 14 -> 2
+    value < 1L shl 21 -> 3
+    value < 1L shl 28 -> 4
+    else -> 5
+}
 
 /**
  * 影子压缩:挂在 compress 前面(出站方向先经过它),看到的是 Via/PacketEvents 处理完、原版压缩之前的单个包。

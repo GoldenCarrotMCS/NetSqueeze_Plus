@@ -1,7 +1,7 @@
 package me.albert.netsqueeze
 
-import me.albert.netsqueeze.shadow.Injector
-import me.albert.netsqueeze.shadow.StatsCommand
+import me.albert.netsqueeze.netty.Injector
+import me.albert.netsqueeze.stats.StatsCommand
 import org.bukkit.plugin.java.JavaPlugin
 
 internal lateinit var instance: NetSqueeze

@@ -1,4 +1,4 @@
-package me.albert.netsqueeze.shadow
+package me.albert.netsqueeze.stats
 
 import me.albert.netsqueeze.logger
 import org.bukkit.Bukkit
@@ -15,14 +15,6 @@ internal const val MSS = 1460
 internal const val TCP_IP_HEADER = 40
 
 internal fun segmentsOf(bytes: Long): Long = (bytes + MSS - 1) / MSS
-
-internal fun varIntSize(value: Long): Int = when {
-    value < 1L shl 7 -> 1
-    value < 1L shl 14 -> 2
-    value < 1L shl 21 -> 3
-    value < 1L shl 28 -> 4
-    else -> 5
-}
 
 /** 一个玩家的累计量。两个处理器都在这条连接的 netty 线程上写,命令线程读 */
 internal class PlayerTally(val name: String) {

@@ -1,8 +1,11 @@
-package me.albert.netsqueeze.shadow
+package me.albert.netsqueeze.netty
 
 import io.netty.channel.Channel
 import me.albert.corelib.utils.registerEvents
 import me.albert.netsqueeze.instance
+import me.albert.netsqueeze.shadow.ShadowCompressor
+import me.albert.netsqueeze.shadow.WireCounter
+import me.albert.netsqueeze.stats.ShadowStats
 import net.minecraft.network.HandlerNames
 import org.bukkit.Bukkit
 import org.bukkit.craftbukkit.entity.CraftPlayer

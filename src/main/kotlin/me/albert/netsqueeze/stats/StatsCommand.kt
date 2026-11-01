@@ -1,4 +1,4 @@
-package me.albert.netsqueeze.shadow
+package me.albert.netsqueeze.stats
 
 import me.albert.netsqueeze.instance
 import org.bukkit.Bukkit
