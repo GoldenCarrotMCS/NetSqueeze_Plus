@@ -39,6 +39,9 @@ client 是根构建的子项目(`settings.gradle.kts` 里 include),打开根目�
   从 **prepender 的 context** 往下写,绕过原版逐包压缩和长度前缀;compress/prepender 留着不拆(Via/PacketEvents 按名字找)。
   原包 promise 等所在帧写完一起完成。不是 ByteBuf 的出站消息原样放过(原版切入站协议时从出站方向写配置任务,
   要走到头侧 decoder 位置的 inbound_config 才被吃掉;2026-11-01 首测就是把它当异常断开、一进服就掉线),放过前先收帧保顺序。出错退不回原版,只能断开。
+- 装 mod 的在线玩家身上有 metadata `netsqueeze_mod`(值 true),别的插件 `player.hasMetadata("netsqueeze_mod")` 判断
+  (发奖励等;用户定的用 meta 不用权限,OP 有所有权限)。进服 LOWEST 打/删(按名字存、不随下线清,没装的也删防残留),
+  退服和卸载时删。伪造 hello 不解压的客户端会被切到新格式后立刻掉线,所以挂着这个标记还在线的就是真装了。
 - `netsqueeze_wire`(`stats/WireCounter`,没装 mod 的):原版出网计数,只数字节,几乎零开销。
 - `/nsq` 两类玩家的出网、包头估算、人均分开显示;`/nsq players` 按人、`/nsq reset` 清零、`/nsq pipeline` 两类玩家各一份管线样本。
 - 影子压缩(没装 mod 的也压一遍只量不发,估"全员换压缩能省多少")在真压缩跑通后删了(线上约 0.7 个核心,只换来估算数),

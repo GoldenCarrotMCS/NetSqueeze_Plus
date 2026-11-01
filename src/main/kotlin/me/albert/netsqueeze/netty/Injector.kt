@@ -3,7 +3,9 @@ package me.albert.netsqueeze.netty
 import io.netty.channel.Channel
 import io.netty.channel.ChannelPipeline
 import io.papermc.paper.network.ChannelInitializeListenerHolder
+import me.albert.corelib.utils.deleteMetadata
 import me.albert.corelib.utils.registerEvents
+import me.albert.corelib.utils.setMetadata
 import me.albert.netsqueeze.instance
 import me.albert.netsqueeze.stats.TrafficStats
 import me.albert.netsqueeze.stats.WireCounter
@@ -19,6 +21,7 @@ import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
+import org.bukkit.event.player.PlayerQuitEvent
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -34,6 +37,9 @@ internal object Injector : Listener {
     private const val HELLO = "netsqueeze_hello"
     private const val STREAM = "netsqueeze_stream"
     private const val WIRE = "netsqueeze_wire"
+
+    /** 装了 mod 的在线玩家身上的 metadata(值 true),别的插件 `player.hasMetadata("netsqueeze_mod")` 判断,发奖励等 */
+    private const val MOD_META = "netsqueeze_mod"
 
     private val LISTENER_KEY = Key.key("netsqueeze", "hello")
 
@@ -64,6 +70,8 @@ internal object Injector : Listener {
     fun shutdown() {
         stopped = true
         ChannelInitializeListenerHolder.removeListener(LISTENER_KEY)
+        // 标记挂在 CoreLib 名下,本插件卸载不会自动清;装 mod 的下面会被踢,先摘掉
+        Bukkit.getOnlinePlayers().forEach { it.deleteMetadata(MOD_META) }
         val targets = HashSet(channels)
         Bukkit.getOnlinePlayers().forEach { targets += channelOf(it) }
         val futures = targets.filter { it.isOpen }.map { channel ->
@@ -96,6 +104,23 @@ internal object Injector : Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     fun onJoin(e: PlayerJoinEvent) = inject(e.player)
+
+    /**
+     * 握手在配置阶段就完了,进服时管线里有没有真压缩就是装没装 mod。LOWEST 打标,别的插件在自己的进服监听里就能读到。
+     * 没装的也删一遍:metadata 按名字存、不随下线清,防同名残留上次的值
+     */
+    @EventHandler(priority = EventPriority.LOWEST)
+    fun onJoinMark(e: PlayerJoinEvent) {
+        val player = e.player
+        if (channelOf(player).pipeline().get(STREAM) == null) {
+            player.deleteMetadata(MOD_META)
+            return
+        }
+        player.setMetadata(MOD_META, true)
+    }
+
+    @EventHandler
+    fun onQuit(e: PlayerQuitEvent) = e.player.deleteMetadata(MOD_META)
 
     /** netty 线程上、连接刚建好时调,这时 packet_handler 已经在管线里 */
     private fun onChannelInit(channel: Channel) {
