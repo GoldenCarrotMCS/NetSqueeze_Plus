@@ -32,6 +32,13 @@ internal object Injector : Listener {
     /** 卸载时最多等多久摘完,拍脑袋定的 */
     private const val SHUTDOWN_WAIT_MS = 3000L
 
+    /**
+     * 卸载开始后不再挂新的。Folia 上进服事件在各区域线程并发触发,onDisable 跑完到 Bukkit 注销监听器之间
+     * 还可能有人进服,它排的注入任务若排在摘除任务后面,就会把旧类加载器的处理器挂回去
+     */
+    @Volatile
+    private var stopped = false
+
     fun init() {
         instance.registerEvents(this)
         Bukkit.getOnlinePlayers().forEach(::inject)
@@ -43,6 +50,7 @@ internal object Injector : Listener {
      * 摘除时 handlerRemoved 顺带 end 掉 deflate 流,不漏原生内存。
      */
     fun shutdown() {
+        stopped = true
         val futures = Bukkit.getOnlinePlayers().map { player ->
             val channel = channelOf(player)
             channel.eventLoop().submit {
@@ -66,7 +74,8 @@ internal object Injector : Listener {
         // 管线只能在自己的 netty 线程上改,和正在发的包排队,不会插到半个包中间
         channel.eventLoop().execute {
             val pipeline = channel.pipeline()
-            if (!channel.isActive || pipeline.get(SHADOW) != null) return@execute
+            // 在 netty 线程上查 stopped:置位后才跑到这里的一律不挂;置位前已经挂上的,摘除任务排在它后面会摘掉
+            if (stopped || !channel.isActive || pipeline.get(SHADOW) != null) return@execute
             // 阈值设成 -1 时没有 compress,影子就直接挂在 prepender 尾侧
             val anchor = if (pipeline.get(HandlerNames.COMPRESS) != null) HandlerNames.COMPRESS else HandlerNames.PREPENDER
             pipeline.addAfter(anchor, SHADOW, ShadowCompressor(tally))
