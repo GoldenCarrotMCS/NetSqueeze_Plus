@@ -7,7 +7,7 @@ import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 
-/** `/nsq` 展示端,纯读 [ShadowStats] */
+/** `/nsq` 展示端,纯读 [TrafficStats] 和 [StreamStats] */
 internal object StatsCommand : CommandExecutor, TabCompleter {
 
     private const val TOP = 15
@@ -24,7 +24,7 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
         val sub = args.firstOrNull()?.lowercase()
 
         if (sub == "reset") {
-            ShadowStats.reset()
+            TrafficStats.reset()
             StreamStats.reset()
             sender.sendMessage("§a统计已清零§7，压缩上下文不动，跑几分钟后 §f/nsq §7看结果")
             return true
@@ -36,8 +36,8 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
         }
 
         if (sub == "pipeline") {
-            sendPipeline(sender, "没装 mod", ShadowStats.samplePipeline)
-            sendPipeline(sender, "装 mod", ShadowStats.sampleStreamPipeline)
+            sendPipeline(sender, "没装 mod", TrafficStats.samplePipeline)
+            sendPipeline(sender, "装 mod", TrafficStats.sampleStreamPipeline)
             return true
         }
 
@@ -45,67 +45,44 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
         return true
     }
 
+    /** 人均按当前在线人数摊,只是个参考;要准就在人数稳定时 reset 后看 */
     private fun sendSummary(sender: CommandSender) {
-        val s = ShadowStats
         val seconds = elapsedSeconds()
-        val raw = s.raw.sum()
-        val wire = s.wire.sum()
-        val shadow = s.shadow.sum()
-        val packets = s.packets.sum()
-        val wireSegments = s.wireSegments.sum()
-        val shadowSegments = s.shadowSegments.sum()
-        val wireTotal = wire + wireSegments * TCP_IP_HEADER
-        val shadowTotal = shadow + shadowSegments * TCP_IP_HEADER
+        val online = Bukkit.getOnlinePlayers().size
+        val streaming = StreamStats.active.get()
+        val vanilla = (online - streaming).coerceAtLeast(0)
 
-        sender.sendMessage("§6--------- NetSqueeze 影子压缩 ---------")
-        sender.sendMessage(
-            "§7时长 §f${duration(seconds)} §7| 在线 §f${Bukkit.getOnlinePlayers().size} §7人(装 mod §f${StreamStats.active.get()}§7) | " +
-                "flush §f${count(s.wireFlushes.sum() / seconds)}§7/s"
-        )
-        sender.sendMessage("§7以下几行是没装 mod 的玩家:")
-        sender.sendMessage(
-            "§7原始包 §f${size(raw)} §7(§f${count(packets / seconds)} §7包/s，均 §f${if (packets == 0L) 0 else raw / packets} B§7)"
-        )
-        sender.sendMessage("§7原版出网 §f${size(wire)} §7(§f${mbps(wire, seconds)}§7，原始的 §f${percent(wire, raw)}§7)")
-        sender.sendMessage("§7影子压缩 §f${size(shadow)} §7(§f${mbps(shadow, seconds)}§7，原始的 §f${percent(shadow, raw)}§7)")
-        sender.sendMessage(
-            "§7TCP/IP 包头估算 原版 §f${count(wireSegments / seconds)} §7段/s ≈ §f${mbps(wireSegments * TCP_IP_HEADER, seconds)}" +
-                "§7，影子 §f${count(shadowSegments / seconds)} §7段/s ≈ §f${mbps(shadowSegments * TCP_IP_HEADER, seconds)}"
-        )
-        sender.sendMessage(
-            "§a全员换压缩后下行少 §f${percent(wireTotal - shadowTotal, wireTotal)}§a(含包头)，约 §f${mbps(wireTotal - shadowTotal, seconds)}"
-        )
-        val nanosPerSecond = s.deflateNanos.sum() / seconds
-        sender.sendMessage(
-            "§7压缩耗时 §f${"%.1f".format(nanosPerSecond / 1e6)} ms/s §7(约 §f${"%.1f".format(nanosPerSecond / 1e7)}%§7 个核心，摊在 netty 线程上)"
-        )
-        val failures = s.failures.sum()
-        if (failures > 0) sender.sendMessage("§c影子出错 $failures 次，出错的连接已停止统计，第一条堆栈见后台")
-        sendStream(sender, seconds)
-    }
+        sender.sendMessage("§6--------- NetSqueeze ---------")
+        sender.sendMessage("§7时长 §f${duration(seconds)} §7| 在线 §f$online §7人，装 mod §f$streaming §7人")
 
-    /** 装了 mod、真走流式压缩的那部分;一个都没有就不显示 */
-    private fun sendStream(sender: CommandSender, seconds: Double) {
+        val t = TrafficStats
+        val wire = t.wire.sum()
+        val wireHeaders = t.wireSegments.sum() * TCP_IP_HEADER
+        sender.sendMessage(
+            "§7没装 mod：出网 §f${size(wire)} §7(§f${mbps(wire, seconds)}§7)，包头约 §f${mbps(wireHeaders, seconds)}" +
+                "§7，人均 §f${kbps(wire + wireHeaders, seconds, vanilla)}"
+        )
+
         val s = StreamStats
         val raw = s.raw.sum()
-        if (s.active.get() == 0 && raw == 0L) return
-        val wire = s.wire.sum()
-        val segments = s.segments.sum()
-        val nanosPerSecond = s.deflateNanos.sum() / seconds
-        sender.sendMessage("§b装 mod 的玩家(真压缩):")
+        if (streaming == 0 && raw == 0L) return
+        val streamWire = s.wire.sum()
+        val streamHeaders = s.segments.sum() * TCP_IP_HEADER
         sender.sendMessage(
-            "§7原始包 §f${size(raw)} §7→ 实际出网 §f${size(wire)} §7(§f${mbps(wire, seconds)}§7，原始的 §f${percent(wire, raw)}§7)" +
-                "，包头约 §f${mbps(segments * TCP_IP_HEADER, seconds)}"
+            "§b装 mod：§7原始 §f${size(raw)} §7→ 出网 §f${size(streamWire)} §7(§f${mbps(streamWire, seconds)}§7，原始的 §f${percent(streamWire, raw)}§7)" +
+                "，包头约 §f${mbps(streamHeaders, seconds)}§7，人均 §f${kbps(streamWire + streamHeaders, seconds, streaming)}"
         )
+        val nanosPerSecond = s.deflateNanos.sum() / seconds
         sender.sendMessage(
-            "§7帧 §f${count(s.frames.sum() / seconds)}§7/s，压缩耗时 §f${"%.1f".format(nanosPerSecond / 1e6)} ms/s"
+            "§7真压缩 §f${count(s.frames.sum() / seconds)} §7帧/s，耗时 §f${"%.1f".format(nanosPerSecond / 1e6)} ms/s" +
+                " §7(约 §f${"%.1f".format(nanosPerSecond / 1e7)}%§7 个核心，摊在 netty 线程上)"
         )
         val failures = s.failures.sum()
         if (failures > 0) sender.sendMessage("§c真压缩出错 $failures 次，出错的连接已断开，第一条堆栈见后台")
     }
 
     private fun sendPlayers(sender: CommandSender) {
-        val rows = ShadowStats.players.values.sortedByDescending { it.wire.sum() }.take(TOP)
+        val rows = TrafficStats.players.values.sortedByDescending { it.wire.sum() }.take(TOP)
         sender.sendMessage("§6--------- NetSqueeze 玩家排行(按实际出网) ---------")
         if (rows.isEmpty()) {
             sender.sendMessage("§7还没有数据")
@@ -116,14 +93,11 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
             if (t.streaming) {
                 val raw = t.raw.sum()
                 sender.sendMessage(
-                    "§7${i + 1}. §b[mod] §f${t.name} §7原始 §f${size(raw)} §7→ 实际 §f${size(wire)} §7(原始的 §f${percent(wire, raw)}§7)"
+                    "§7${i + 1}. §b[mod] §f${t.name} §7原始 §f${size(raw)} §7→ 出网 §f${size(wire)} §7(原始的 §f${percent(wire, raw)}§7)"
                 )
                 return@forEachIndexed
             }
-            val shadow = t.shadow.sum()
-            sender.sendMessage(
-                "§7${i + 1}. §f${t.name} §7原版 §f${size(wire)} §7→ 影子 §f${size(shadow)} §7(少 §f${percent(wire - shadow, wire)}§7)"
-            )
+            sender.sendMessage("§7${i + 1}. §f${t.name} §7出网 §f${size(wire)}")
         }
     }
 
@@ -136,7 +110,7 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
         sender.sendMessage("§f" + names.joinToString(" §7→ §f"))
     }
 
-    private fun elapsedSeconds() = ((System.currentTimeMillis() - ShadowStats.since) / 1000.0).coerceAtLeast(1.0)
+    private fun elapsedSeconds() = ((System.currentTimeMillis() - TrafficStats.since) / 1000.0).coerceAtLeast(1.0)
 
     private fun size(bytes: Long): String {
         if (bytes >= 1L shl 30) return "%.2f GB".format(bytes / (1L shl 30).toDouble())
@@ -147,6 +121,9 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
 
     /** 带宽口径和机房限速一致:十进制兆比特 */
     private fun mbps(bytes: Long, seconds: Double) = "%.1f Mbps".format(bytes * 8 / seconds / 1e6)
+
+    private fun kbps(bytes: Long, seconds: Double, players: Int) =
+        if (players == 0) "-" else "%.0f kbps".format(bytes * 8 / seconds / 1e3 / players)
 
     private fun percent(part: Long, whole: Long) = if (whole == 0L) "-" else "%.1f%%".format(part * 100.0 / whole)
 

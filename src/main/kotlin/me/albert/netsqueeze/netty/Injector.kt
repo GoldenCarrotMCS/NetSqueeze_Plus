@@ -5,9 +5,8 @@ import io.netty.channel.ChannelPipeline
 import io.papermc.paper.network.ChannelInitializeListenerHolder
 import me.albert.corelib.utils.registerEvents
 import me.albert.netsqueeze.instance
-import me.albert.netsqueeze.shadow.ShadowCompressor
-import me.albert.netsqueeze.shadow.WireCounter
-import me.albert.netsqueeze.stats.ShadowStats
+import me.albert.netsqueeze.stats.TrafficStats
+import me.albert.netsqueeze.stats.WireCounter
 import me.albert.netsqueeze.stream.HelloHandler
 import me.albert.netsqueeze.stream.Protocol
 import me.albert.netsqueeze.stream.StreamCompressor
@@ -24,8 +23,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 管线注入。每条新连接一建好就在 packet_handler 前挂握手处理器([HelloHandler]);装了 mod 的在配置阶段握手成功后
- * 挂真压缩([StreamCompressor]),没装的进服时挂影子压缩和原版计数。出站方向(从尾到头)的顺序是:
- * encoder(Via/PacketEvents 挂在它附近)→ **影子/真压缩** → compress → prepender → **原版计数** → encrypt。
+ * 挂真压缩([StreamCompressor]),没装的进服时只挂原版出网计数。出站方向(从尾到头)的顺序是:
+ * encoder(Via/PacketEvents 挂在它附近)→ **真压缩** → compress → prepender → **原版计数** → encrypt。
  *
  * 处理器随连接关闭由 netty 自动拆掉;插件卸载时同步摘干净,支持 PlugManX 热重载:已切到真压缩的连接,
  * 新格式的流没法交接给新实例,发一条断线消息让他们重连;其余连接无感(统计归零,压缩上下文重新开始)。
@@ -34,7 +33,6 @@ internal object Injector : Listener {
 
     private const val HELLO = "netsqueeze_hello"
     private const val STREAM = "netsqueeze_stream"
-    private const val SHADOW = "netsqueeze_shadow"
     private const val WIRE = "netsqueeze_wire"
 
     private val LISTENER_KEY = Key.key("netsqueeze", "hello")
@@ -76,7 +74,7 @@ internal object Injector : Listener {
                     channel.writeAndFlush(Protocol.reconnectPacket())
                     channel.close()
                 }
-                removeIfPresent(pipeline, HELLO, STREAM, SHADOW, WIRE)
+                removeIfPresent(pipeline, HELLO, STREAM, WIRE)
             }
         }
         // 各连接分散在几条 netty 线程上并行摘,正常几毫秒;总等待封顶,netty 线程卡死也不至于把卸载拖住
@@ -86,12 +84,12 @@ internal object Injector : Listener {
 
     /**
      * 握手成功,在这条连接的 netty 线程上调。先用原版格式发 enable,紧接着挂真压缩:同一个 netty 任务里做完,
-     * 中间插不进别的出站字节,enable 之后的全是新格式。只在配置阶段切(进服后才来的不理,影子那套已经挂上了)
+     * 中间插不进别的出站字节,enable 之后的全是新格式。只在配置阶段切(进服后才来的不理,原版计数已经挂上了)
      */
     fun enableStream(channel: Channel) {
         val pipeline = channel.pipeline()
         if (stopped || !channel.isActive || pipeline.get(HandlerNames.PREPENDER) == null) return
-        if (pipeline.get(STREAM) != null || pipeline.get(SHADOW) != null) return
+        if (pipeline.get(STREAM) != null || pipeline.get(WIRE) != null) return
         channel.writeAndFlush(Protocol.enablePacket())
         pipeline.addAfter(anchorOf(pipeline), STREAM, StreamCompressor())
     }
@@ -110,7 +108,7 @@ internal object Injector : Listener {
 
     private fun inject(player: Player) {
         val channel = channelOf(player)
-        val tally = ShadowStats.tally(player)
+        val tally = TrafficStats.tally(player)
         // 管线只能在自己的 netty 线程上改,和正在发的包排队,不会插到半个包中间
         channel.eventLoop().execute {
             val pipeline = channel.pipeline()
@@ -122,17 +120,16 @@ internal object Injector : Listener {
             if (stream != null) {
                 stream.tally = tally
                 tally.streaming = true
-                ShadowStats.sampleStreamPipeline = pipeline.names()
+                TrafficStats.sampleStreamPipeline = pipeline.names()
                 return@execute
             }
-            if (pipeline.get(SHADOW) != null) return@execute
-            pipeline.addAfter(anchorOf(pipeline), SHADOW, ShadowCompressor(tally))
+            if (pipeline.get(WIRE) != null) return@execute
             pipeline.addBefore(HandlerNames.PREPENDER, WIRE, WireCounter(tally))
-            ShadowStats.samplePipeline = pipeline.names()
+            TrafficStats.samplePipeline = pipeline.names()
         }
     }
 
-    /** 阈值设成 -1 时没有 compress,影子/真压缩就直接挂在 prepender 尾侧 */
+    /** 阈值设成 -1 时没有 compress,真压缩就直接挂在 prepender 尾侧 */
     private fun anchorOf(pipeline: ChannelPipeline) =
         if (pipeline.get(HandlerNames.COMPRESS) != null) HandlerNames.COMPRESS else HandlerNames.PREPENDER
 

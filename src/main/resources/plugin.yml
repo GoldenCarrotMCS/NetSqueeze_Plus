@@ -6,7 +6,7 @@ folia-supported: true
 depend: [ CoreLib ]
 commands:
   netsqueeze:
-    description: 影子压缩统计，估算换成跨包流式压缩后下行能省多少
+    description: 查看装 mod 和没装 mod 玩家的下行流量
     usage: /netsqueeze [players|reset|pipeline]
     aliases: [ nsq ]
     permission: netsqueeze.admin

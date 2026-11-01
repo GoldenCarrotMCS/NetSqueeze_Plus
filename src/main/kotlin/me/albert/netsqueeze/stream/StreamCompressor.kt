@@ -13,7 +13,7 @@ import net.minecraft.network.HandlerNames
 import java.nio.channels.ClosedChannelException
 
 /**
- * 真流式压缩(装了 mod 的连接):挂的位置和影子压缩一样(compress 尾侧),看到的是 Via/PacketEvents 处理完的单个包。
+ * 真流式压缩(装了 mod 的连接):挂在 compress 尾侧(出站先经过它),看到的是 Via/PacketEvents 处理完的单个包。
  * 包不再往 compress 传,喂进本连接的 [FrameDeflater];每次 flush 收成一帧,从 prepender 的 context 往下写,
  * 绕过原版的逐包压缩和长度前缀。compress、prepender 留在管线里不拆:Via、PacketEvents 按名字找它们。
  *

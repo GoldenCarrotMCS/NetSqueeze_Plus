@@ -29,18 +29,20 @@ client 是根构建的子项目(`settings.gradle.kts` 里 include),打开根目�
 3. 帧格式:varint 帧长 + deflate 输出(整条连接一个流、nowrap、level 6,每次 flush 做 SYNC_FLUSH 成一帧);
    解压后是一串"varint 包长 + 包字节(包 id + 包体)"。上行不动。
 
-## 服务端(`netty/`、`stream/`、`shadow/`、`stats/`)
+## 服务端(`netty/`、`stream/`、`stats/`)
 
-`netty/Injector` 管全部管线注入。出站方向(从尾到头):encoder(Via/PacketEvents 挂在它附近)→ **影子/真压缩**
+`netty/Injector` 管全部管线注入。出站方向(从尾到头):encoder(Via/PacketEvents 挂在它附近)→ **真压缩**
 → compress → prepender → **原版计数** → encrypt。
 - `netsqueeze_hello`(`stream/HelloHandler`):用 Paper 的 `ChannelInitializeListenerHolder` 在连接一建好就挂在
   packet_handler 前,等 hello;没装 mod 的进服时摘掉。
 - `netsqueeze_stream`(`stream/StreamCompressor`,装 mod 的):包不再往 compress 传,喂进 `FrameDeflater`,flush 时
   从 **prepender 的 context** 往下写,绕过原版逐包压缩和长度前缀;compress/prepender 留着不拆(Via/PacketEvents 按名字找)。
-  原包 promise 等所在帧写完一起完成。出错退不回原版,只能断开。
-- `netsqueeze_shadow` + `netsqueeze_wire`(没装 mod 的):影子压缩(同一个 `FrameDeflater`,量完就丢)和原版出网计数,
-  算"全员换压缩能省多少"。
-- `/nsq` 汇总(装 mod 的单独一段真实出网)、`/nsq players` 按人、`/nsq reset` 清零、`/nsq pipeline` 看处理器位置。
+  原包 promise 等所在帧写完一起完成。不是 ByteBuf 的出站消息原样放过(原版切入站协议时从出站方向写配置任务,
+  要走到头侧 decoder 位置的 inbound_config 才被吃掉;2026-11-01 首测就是把它当异常断开、一进服就掉线),放过前先收帧保顺序。出错退不回原版,只能断开。
+- `netsqueeze_wire`(`stats/WireCounter`,没装 mod 的):原版出网计数,只数字节,几乎零开销。
+- `/nsq` 两类玩家的出网、包头估算、人均分开显示;`/nsq players` 按人、`/nsq reset` 清零、`/nsq pipeline` 两类玩家各一份管线样本。
+- 影子压缩(没装 mod 的也压一遍只量不发,估"全员换压缩能省多少")在真压缩跑通后删了(线上约 0.7 个核心,只换来估算数),
+  要再估去 git 历史里找 `shadow/ShadowCompressor`。
 
 热重载:`Injector.shutdown` 同步等各 netty 线程摘完处理器才返回(旧类加载器关闭后旧处理器再处理包会
 NoClassDefFoundError 踢人)。已切到真压缩的连接交接不了,先走这条流发断线消息再关,让他们重连。

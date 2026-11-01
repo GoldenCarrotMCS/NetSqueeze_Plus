@@ -6,8 +6,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.LongAdder
 
 /**
- * 装了 mod、真走流式压缩的连接的全服汇总。口径和 [ShadowStats] 的影子一栏相同,只是这里是真发出去的字节
- * (帧长 varint + 压缩输出,不含 TCP/IP 头,包头按段数估)。时间起点共用 [ShadowStats.since]。
+ * 装了 mod、真走流式压缩的连接的全服汇总。wire 是真发出去的字节(帧长 varint + 压缩输出,不含 TCP/IP 头,
+ * 包头按段数估),raw 是压缩前的包(含包长前缀)。时间起点共用 [TrafficStats.since]。
  */
 internal object StreamStats {
 

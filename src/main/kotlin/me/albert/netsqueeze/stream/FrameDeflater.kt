@@ -7,7 +7,6 @@ import java.util.zip.Deflater
 
 /**
  * 按帧的流式 deflate:整条连接共用一个 deflate 流,[feed] 逐包喂,[finish] 在 flush 时 SYNC_FLUSH 收成一帧。
- * 影子压缩和真压缩共用,影子量完大小就丢。
  *
  * 帧格式(客户端 mod 照此解):varint 帧长 + deflate 输出;解压后是一串"varint 包长 + 包字节(包 id + 包体)"。
  * SYNC_FLUSH 保证每帧解压出来都是整包,不会有半个包留到下一帧。
