@@ -16,8 +16,9 @@
 ![Client](https://img.shields.io/badge/Client-Fabric%20%28no%20API%29-dbb06b?style=flat-square)
 ![Java](https://img.shields.io/badge/Java-25-e76f00?style=flat-square&logo=openjdk&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-8957e5?style=flat-square)
+[![原理视频](https://img.shields.io/badge/B站-原理视频-00A1D6?style=flat-square&logo=bilibili&logoColor=white)](https://www.bilibili.com/video/BV1kkx46UEiQ/)
 
-[为什么能省](#-为什么能省) · [实测](#-实测) · [安装](#-安装) · [命令](#-命令) · [给其他插件](#-给其他插件判断玩家装没装模组) · [协议](#-协议)
+[原理视频](#-原理视频) · [为什么能省](#-为什么能省) · [实测](#-实测) · [安装](#-安装) · [命令](#-命令) · [给其他插件](#-给其他插件判断玩家装没装模组) · [协议](#-协议)
 
 </div>
 
@@ -67,6 +68,12 @@ ViaVersion、PacketEvents、Grim、ProtocolLib、TAB 同装实测，它们照常
 </td>
 </tr>
 </table>
+
+## 🎬 原理视频
+
+两分钟看懂：用矿车打比方讲原版为什么费流量、NetSqueeze 怎么省，附实测数据。点图去 B 站观看：
+
+<a href="https://www.bilibili.com/video/BV1kkx46UEiQ/"><img src="docs/video-cover.jpg" alt="NetSqueeze 原理视频" width="640"/></a>
 
 ## 🤔 为什么能省
 
