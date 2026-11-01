@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # 打 tag 时建 Release 要用
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # 缓存 ~/.gradle(依赖、paperweight 与 Loom 反编译出的 Minecraft),不缓存每次都要重新反编译好几分钟
+      - uses: gradle/actions/setup-gradle@v4
+
+      # 插件 compileOnly 依赖 CoreLib,只在本地 maven 里,先把它构建并发布到构建机的 mavenLocal
+      - name: Build CoreLib
+        run: |
+          git clone --depth 1 https://github.com/eternity4719/CoreLib "$RUNNER_TEMP/CoreLib"
+          cd "$RUNNER_TEMP/CoreLib"
+          chmod +x gradlew
+          ./gradlew publishToMavenLocal --no-daemon
+
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew build --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetSqueeze
+          path: |
+            build/libs/*-all.jar
+            client/build/libs/NetSqueeze-Client-*.jar
+          if-no-files-found: error
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/libs/*-all.jar
+            client/build/libs/NetSqueeze-Client-*.jar
+          generate_release_notes: true

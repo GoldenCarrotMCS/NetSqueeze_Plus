@@ -10,6 +10,7 @@
 
 <br/>
 
+[![Build](https://img.shields.io/github/actions/workflow/status/eternity4719/NetSqueeze/build.yml?branch=master&style=flat-square&label=Build)](https://github.com/eternity4719/NetSqueeze/actions/workflows/build.yml)
 ![Minecraft](https://img.shields.io/badge/Minecraft-26.1--26.3-62B47A?style=flat-square&logo=minecraft&logoColor=white)
 ![Server](https://img.shields.io/badge/Server-Paper%20%2F%20Folia-1f6feb?style=flat-square)
 ![Client](https://img.shields.io/badge/Client-Fabric%20%28no%20API%29-dbb06b?style=flat-square)
@@ -161,6 +162,9 @@ sequenceDiagram
 
 ## 🚀 安装
 
+插件和模组都在 [Releases](https://github.com/eternity4719/NetSqueeze/releases) 下载；最新提交的构建在
+[Actions](https://github.com/eternity4719/NetSqueeze/actions/workflows/build.yml) 里每次运行的 Artifacts 中。
+
 1. **服务端**：`plugins/` 里放 CoreLib、CoreLibRuntime 和 `NetSqueeze-x.x.x-all.jar`，重启。
 2. **客户端**：`NetSqueeze-Client-x.x.x.jar` 放进 `mods/`。
 3. 玩家照常进服就行。客户端 `logs/latest.log` 里出现 `服务器已启用流式压缩`，就说明已经生效。
@@ -228,6 +232,9 @@ cd CoreLib && ./gradlew build publishToMavenLocal
 ```
 
 `client/` 是根构建的子项目，Fabric Loom 在根项目上统一声明。
+
+GitHub Actions（`.github/workflows/build.yml`）每次推送都会照上面的步骤构建，两个 jar 作为 Artifacts 上传；
+推送 `v*` 标签（如 `v1.0.0`）时自动建 Release 并附上两个 jar。
 
 </details>
 
