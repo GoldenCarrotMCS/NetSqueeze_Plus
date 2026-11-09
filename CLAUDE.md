@@ -5,6 +5,15 @@ Folia/Canvas 服务器插件(Kotlin 2.3 / JVM 25,paperweight `foliaDevBundle`,sh
 **装了 mod 的玩家走"按 flush 攒帧 + 跨包流式压缩"的下行格式,没装的走原版。** 思路来自 NeoForge mod
 NotEnoughBandwidth(只有 NeoForge、两端必装、作者明确不做 Bukkit 版,所以自己做)。不需要改服务端核心。
 
+## 两个版本(两个分支)
+
+- `master`:服主自己服务器用的,依赖 CoreLib,推 `origin`(私有)。平时只在这里改。
+- `standalone`:公开版,= master + 一个去掉 CoreLib 的提交(Injector 里 3 处换原生 Bukkit 写法、Kotlin 运行库
+  重定位后打进 jar、plugin.yml 去掉 depend、Actions 不再构建 CoreLib、README 安装说明),推到 `github` 远端的 master,
+  那边 Actions 自动构建发 Release。
+- 同步公开版:`git checkout standalone && git merge master`,`compileKotlin` 过了再 `git push github standalone:master`,
+  切回 master。冲突只会出在上面那几处。两边版本号保持一致(改版本号在 master 改)。
+
 ## 常用命令
 
 ```
