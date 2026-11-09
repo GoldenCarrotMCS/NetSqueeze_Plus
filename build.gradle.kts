@@ -36,6 +36,8 @@ dependencies {
 tasks.shadowJar {
     // 改包名,和别的插件各自带的 Kotlin 版本互不干扰
     relocate("kotlin", "me.albert.netsqueeze.libs.kotlin")
+    // 只留插件代码用得到的 Kotlin 类(没用反射,不会误删),jar 从近 2 MB 降下来
+    minimize()
     exclude("META-INF/*.kotlin_module", "META-INF/versions/**")
 }
 
