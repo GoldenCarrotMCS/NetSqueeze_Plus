@@ -23,14 +23,6 @@ jobs:
       # 缓存 ~/.gradle(依赖、paperweight 与 Loom 反编译出的 Minecraft),不缓存每次都要重新反编译好几分钟
       - uses: gradle/actions/setup-gradle@v4
 
-      # 插件 compileOnly 依赖 CoreLib,只在本地 maven 里,先把它构建并发布到构建机的 mavenLocal
-      - name: Build CoreLib
-        run: |
-          git clone --depth 1 https://github.com/eternity4719/CoreLib "$RUNNER_TEMP/CoreLib"
-          cd "$RUNNER_TEMP/CoreLib"
-          chmod +x gradlew
-          ./gradlew publishToMavenLocal --no-daemon
-
       - name: Build
         run: |
           chmod +x gradlew

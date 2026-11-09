@@ -156,7 +156,7 @@ sequenceDiagram
 |---|---|---|
 | Minecraft | **26.1.x** 的 Paper / Folia 系 | **26.1 ~ 26.3**（一个 jar 通用） |
 | 运行环境 | Java 25 | Fabric Loader 0.19+，**不需要 Fabric API** |
-| 前置 | [CoreLib](https://github.com/eternity4719/CoreLib)（同仓库构建出 `CoreLib` 和提供 Kotlin 运行库的 `CoreLibRuntime`，两个都装） | 无 |
+| 前置 | 无（Kotlin 运行库已打进 jar） | 无 |
 
 <details>
 <summary>测试覆盖范围</summary>
@@ -172,7 +172,7 @@ sequenceDiagram
 插件和模组都在 [Releases](https://github.com/eternity4719/NetSqueeze/releases) 下载；最新提交的构建在
 [Actions](https://github.com/eternity4719/NetSqueeze/actions/workflows/build.yml) 里每次运行的 Artifacts 中。
 
-1. **服务端**：`plugins/` 里放 CoreLib、CoreLibRuntime 和 `NetSqueeze-x.x.x-all.jar`，重启。
+1. **服务端**：`NetSqueeze-x.x.x-all.jar` 放进 `plugins/`，重启。
 2. **客户端**：`NetSqueeze-Client-x.x.x.jar` 放进 `mods/`。
 3. 玩家照常进服就行。客户端 `logs/latest.log` 里出现 `服务器已启用流式压缩`，就说明已经生效。
 
@@ -230,11 +230,7 @@ boolean modded = player.hasMetadata("netsqueeze_mod");
 <summary>需要 JDK 25</summary>
 
 ```bash
-# 先把 CoreLib 发布到本地 maven（顺带构建出 CoreLib 和 CoreLibRuntime 两个插件 jar）
-git clone https://github.com/eternity4719/CoreLib
-cd CoreLib && ./gradlew build publishToMavenLocal
-
-# 再构建本仓库：插件在 build/libs/*-all.jar，客户端模组在 client/build/libs/
+# 插件在 build/libs/*-all.jar，客户端模组在 client/build/libs/
 ./gradlew build
 ```
 

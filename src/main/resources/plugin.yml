@@ -3,7 +3,6 @@ version: '${version}'
 main: me.albert.netsqueeze.NetSqueeze
 api-version: '1.21'
 folia-supported: true
-depend: [ CoreLib ]
 commands:
   netsqueeze:
     description: 查看装 mod 和没装 mod 玩家的下行流量

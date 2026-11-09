@@ -3,9 +3,6 @@ package me.albert.netsqueeze.netty
 import io.netty.channel.Channel
 import io.netty.channel.ChannelPipeline
 import io.papermc.paper.network.ChannelInitializeListenerHolder
-import me.albert.corelib.utils.deleteMetadata
-import me.albert.corelib.utils.registerEvents
-import me.albert.corelib.utils.setMetadata
 import me.albert.netsqueeze.instance
 import me.albert.netsqueeze.stats.TrafficStats
 import me.albert.netsqueeze.stats.WireCounter
@@ -22,6 +19,7 @@ import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
+import org.bukkit.metadata.FixedMetadataValue
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -57,7 +55,7 @@ internal object Injector : Listener {
     private var stopped = false
 
     fun init() {
-        instance.registerEvents(this)
+        Bukkit.getPluginManager().registerEvents(this, instance)
         ChannelInitializeListenerHolder.addListener(LISTENER_KEY, ::onChannelInit)
         Bukkit.getOnlinePlayers().forEach(::inject)
     }
@@ -70,8 +68,8 @@ internal object Injector : Listener {
     fun shutdown() {
         stopped = true
         ChannelInitializeListenerHolder.removeListener(LISTENER_KEY)
-        // 标记挂在 CoreLib 名下,本插件卸载不会自动清;装 mod 的下面会被踢,先摘掉
-        Bukkit.getOnlinePlayers().forEach { it.deleteMetadata(MOD_META) }
+        // 装 mod 的下面会被踢,标记先摘掉
+        Bukkit.getOnlinePlayers().forEach { it.removeMetadata(MOD_META, instance) }
         val targets = HashSet(channels)
         Bukkit.getOnlinePlayers().forEach { targets += channelOf(it) }
         val futures = targets.filter { it.isOpen }.map { channel ->
@@ -113,14 +111,14 @@ internal object Injector : Listener {
     fun onJoinMark(e: PlayerJoinEvent) {
         val player = e.player
         if (channelOf(player).pipeline().get(STREAM) == null) {
-            player.deleteMetadata(MOD_META)
+            player.removeMetadata(MOD_META, instance)
             return
         }
-        player.setMetadata(MOD_META, true)
+        player.setMetadata(MOD_META, FixedMetadataValue(instance, true))
     }
 
     @EventHandler
-    fun onQuit(e: PlayerQuitEvent) = e.player.deleteMetadata(MOD_META)
+    fun onQuit(e: PlayerQuitEvent) = e.player.removeMetadata(MOD_META, instance)
 
     /** netty 线程上、连接刚建好时调,这时 packet_handler 已经在管线里 */
     private fun onChannelInit(channel: Channel) {

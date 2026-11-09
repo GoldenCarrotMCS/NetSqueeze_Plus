@@ -29,8 +29,14 @@ kotlin {
 
 dependencies {
     paperweight.foliaDevBundle("26.1.2.build.8-stable")
-    compileOnly("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
-    compileOnly("me.albert:corelib:1.0.0")
+    // 公开版不依赖别的插件提供 Kotlin 运行库,打进 jar
+    implementation("org.jetbrains.kotlin:kotlin-stdlib")
+}
+
+tasks.shadowJar {
+    // 改包名,和别的插件各自带的 Kotlin 版本互不干扰
+    relocate("kotlin", "me.albert.netsqueeze.libs.kotlin")
+    exclude("META-INF/*.kotlin_module", "META-INF/versions/**")
 }
 
 tasks.build {
