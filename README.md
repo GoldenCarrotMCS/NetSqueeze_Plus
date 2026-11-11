@@ -255,9 +255,9 @@ boolean modded = nsq != null && player.getMetadata("netsqueeze_mod").stream()
 
 **构建、测试执行和服务器启动全部交给 GitHub Actions，不在本地构建。**
 
-- PR、推送 `master` 或手动运行 **Build**：构建插件/模组，执行协议对拍和边界测试，检查 Jar 并生成 SHA-256。
+- PR、任意分支推送或手动运行 **Build**：构建插件/模组，执行协议对拍和边界测试，检查 Jar 并生成 SHA-256。
 - 成功后的 `NetSqueeze` Artifact 包含两个版本相同的 Jar 和 `SHA256SUMS.txt`；测试报告另存为 `test-reports`。
-- 只有 `master` 推送触发的独立 Release job 有发布权限；已有版本不会覆盖。发布时修改根 `build.gradle.kts` 的版本号。
+- 独立发布 job 只处理可信分支推送，或明确勾选 `publish_jars` 的手动构建，不从 PR 发布。`master` 按版本号发布正式版；其他分支每个提交自动发布 `preview-v<版本>-<提交>` 预发布，带两个 Jar 和 SHA-256，且不会覆盖正式版 Latest。已有标签/版本不强制覆盖。
 - 依赖锁与校验元数据通过 **Dependency baseline** 手动生成、人工审核后提交；首次基线提交前不能声称传递依赖已全部校验。
 - 可选服务器烟测必须手动提供 26.1.2 服务端 Jar、SHA-256 和明确的 EULA 同意；它不测试真实玩家握手。
 

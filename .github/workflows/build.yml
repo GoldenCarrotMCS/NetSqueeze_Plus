@@ -2,10 +2,14 @@ name: Build
 
 on:
   push:
-    branches: [master]
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
     inputs:
+      publish_jars:
+        description: '构建成功后发布 Jar（master 正式版，其他分支预发布）'
+        type: boolean
+        default: false
       run_server_smoke:
         description: '运行服务器启动/命令/停服烟测（不会测试真实玩家握手）'
         type: boolean
@@ -43,6 +47,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Verify release automation rules
+        run: python -I scripts/ci/test_check_release.py
       - name: Build and protocol regression tests
         run: |
           if [ ! -f gradle/verification-metadata.xml ]; then
@@ -105,7 +111,10 @@ jobs:
           retention-days: 14
 
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    name: Publish verified JARs
+    if: >-
+      github.actor != 'dependabot[bot]' && startsWith(github.ref, 'refs/heads/') &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_jars))
     needs: [build, client-compat]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -129,11 +138,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TITLE: ${{ steps.release.outputs.title }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           cd dist
           sha256sum --check SHA256SUMS.txt
-          gh release create "v$VERSION" "NetSqueeze-$VERSION-all.jar" "NetSqueeze-Client-$VERSION.jar" SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "NetSqueeze $VERSION" --generate-notes
+          args=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TITLE" --generate-notes)
+          if [ "$PRERELEASE" = true ]; then
+            args+=(--prerelease --latest=false --notes "自动构建预发布：CI 编译与自动化测试通过，真实 VC/Fabric 联调仍待验收。来源提交：$GITHUB_SHA。")
+          else
+            args+=(--latest)
+          fi
+          gh release create "$TAG" "NetSqueeze-$VERSION-all.jar" "NetSqueeze-Client-$VERSION.jar" SHA256SUMS.txt "${args[@]}"
 
   server-smoke:
     if: github.event_name == 'workflow_dispatch' && inputs.run_server_smoke

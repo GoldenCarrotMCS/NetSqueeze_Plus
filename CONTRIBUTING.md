@@ -10,11 +10,13 @@
 
 ## CI 流程
 
-1. 在 PR 或经授权的推送上运行 **Build**，完成服务端与客户端编译、JUnit 测试、Jar 结构检查。
+1. 任意分支推送和 PR 都自动运行 **Build**，完成服务端与客户端编译、JUnit 测试、Jar 结构检查。
 2. 根项目 `StreamCompressorTest` 通过真实 Netty 处理器生成 `build/protocol-fixtures/`；客户端测试消费同次构建的字节，避免把两个不同 Minecraft 开发类路径混到一起。
 3. 测试报告无论成功失败均上传到 `test-reports`。成功构建上传 `NetSqueeze`，内含两个版本一致的 Jar 及 `SHA256SUMS.txt`。
-4. 只有推送 `master` 的独立 Release job 拥有 `contents: write`。它不运行 Gradle；认证、API 错误和指向其他提交的既有标签均导致失败，而不是当作“Release 不存在”。
-5. 常规代码变更不强制新发版；准备发布时修改根 `version`。同版本 Release 已存在时不会覆盖。
+4. 独立发布 job 仅在分支 push 或勾选 `publish_jars` 的 workflow_dispatch 上申请 `contents: write`，永不从 PR 发布，Dependabot 不发布。它不运行 Gradle；认证、API 错误和指向其他提交的既有标签均导致失败，而不是当作“Release 不存在”。
+5. `master` 按根 `version` 创建正式版，准备新正式版需改版本号；同版本不覆盖。其他分支每个提交自动创建 `preview-v<版本>-<12 位提交>` 预发布，不改正式 Latest，不移动已有标签。测试包从 Releases 的预发布直接下载，不必合并 PR。
+6. 手动构建默认只产出 Artifacts；需要发布时勾选 `publish_jars`。真实服务器 smoke 仍是另一个显式 opt-in，不会因自动发布而接受 EULA。
+7. 同仓库的分支推送及其 PR 可能各运行一次验证；这是不同事件，PR 发布步骤显示 skipped 是安全边界，不代表 build 被跳过。
 
 ## 依赖基线（首次必须经维护者审核）
 

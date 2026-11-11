@@ -32,7 +32,7 @@
 
 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-- PR 构建只读权限、无持久化 Git 凭据；独立 Release job 才有写权限，不执行 Gradle。
+- 所有分支推送及 PR 自动构建；PR 只读权限、无持久化 Git 凭据。独立发布 job 只在可信分支 push 或明确要求发布的手动构建上有写权限，不执行 Gradle。master 正式版，其他分支按提交生成不可变预发布，不能覆盖正式 Latest 或强制移动标签。
 - 根测试用真实 StreamCompressor 生成协议夹具；client:test 依赖根 test 并用真实 StreamDecoder / EnableDetector 解码。不把两端 Minecraft 放在同一测试类路径。
 - Action 与 Wrapper 固定校验值；依赖锁和 verification metadata 只能在可信 GitHub 修订上生成、人工审核，不能自动信任 PR 的首次下载。
 - `scripts/ci/verify_artifacts.py` 检查两端版本、描述符、Kotlin 重定位及 Mixin 类，产生两个 Jar 与 SHA256SUMS。
