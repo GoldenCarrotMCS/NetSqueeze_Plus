@@ -2,7 +2,7 @@ package me.albert.netsqueeze.stream
 
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.ByteBufAllocator
-import net.minecraft.network.VarInt
+import me.albert.netsqueeze.platform.VarInts as VarInt
 import java.util.zip.Deflater
 
 /**

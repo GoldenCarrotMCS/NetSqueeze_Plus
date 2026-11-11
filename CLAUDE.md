@@ -9,7 +9,7 @@
 ## 项目基线
 
 - 公开独立版，不依赖 CoreLib。Kotlin 运行库重定位后完整打包，不启用 Shadow minimize。
-- Java 25、Kotlin 2.3.20；服务端内部实现绑定 Minecraft 26.1.2，dev bundle 固定 `26.1.2.build.8-stable`。
+- Java 25、Kotlin 2.3.20；默认发布编译基线仍是固定的 Folia `26.1.2.build.8-stable`；1.3.0 生产代码不再直接链接 NMS/CraftPlayer，易变签名集中在缓存适配器中，服务端接受 26+ 正式版并做 API 能力检查。
 - Fabric 客户端使用 Java、不依赖 Fabric API，编译基线 26.1.2；跨 26.1～26.3 声明继承自上游，改动后不能仅凭编译声称兼容。
 - Loom 固定正式版本，在根项目 apply false 声明、client 子项目应用，避免与 paperweight 类加载器冲突。
 - 两端使用根目录同一版本号；公开仓库远程为 `origin`，不依赖历史私有分支/远程结构。
@@ -44,7 +44,7 @@
 - 服务器名称为 GoldenCarrot服务器。上游历史数据不得改称本服务器实测，作者与许可不改。
 - 新增 `transport-mode: auto/direct/velocity`；VC 后端建议明确 velocity。auto 只探测后端已有代理转发开关，不是全能代理检测。探测失败时选择隧道；已知代理不得强制裸流 direct。
 - **不在 VC 添加插件。** 后端 PLAY 邀请 + UUID ACK，普通 CustomPayload 透明承载。裸 v1 不能穿过 Minecraft 代理；只补 hello 不可行。
-- `shared/.../TunnelProtocol.java` 两端共用白名单/分片限制。首版隧道仅同版本 26.1.2，不允许不透明包体交给 VC/Via 做跨版本转换。
+- `shared/.../TunnelProtocol.java` 两端共用白名单/分片限制。1.3.0 隧道 v2 按后端/客户端实际协议号匹配，不再限定 26.1.2，不允许不透明包体交给 VC/Via 做跨版本转换。
 - `tunnel/TunnelGate` 在 encoder 尾侧、unbundler 头侧标记包；`TunnelCompressor` 编码后截获白名单 ByteBuf，再经正常 encoder 发送载荷。不能绕过原版 compress/prepender。
 - 小于 tunnel-min-packet-bytes 的包原样发送且不推进字典。遇控制包先收帧。重生/配置切换/卸载使用 STOP 隔离字典；初始/新 PLAY 入站限次重试，不能固定延迟强制启用。
 - 客户端 fallback Codec 只保留本协议载荷，不依赖 Fabric API；TunnelClientHandler 在 decoder 后、bundler 前。用 PacketDecoderAccessor 取当前 ProtocolInfo.codec() 还原对象，**不可递归进入 ByteToMessageDecoder**。
@@ -52,3 +52,12 @@
 - metadata 在代理 ACK 后才通过实体调度器设置，不能保证 PlayerJoinEvent LOWEST 可见。
 - `/nsq` 的隧道 raw/payload 不是相对原版收益，也不是 VC 出口 TCP 流量。比较实际节省需要在 VC 出口测量。
 - 根测试生成 tunnel-*.bin；客户端消费服务端真实载荷。它不代替真实 VC + Fabric + 后端联调。参见 docs/VELOCITY.md。
+
+## 1.3.0 多版本适配与验证边界
+
+- 不保证未知未来版本永远兼容。MinecraftVersions.eligible 只决定版本是否进入 API 检查，不是完整兼容认证；API 失败时在注入前禁用。
+- PacketAccess 缓存 Identifier、载荷、断线包和 SharedConstants.getProtocolVersion 反射签名；ChannelAccess 缓存 CraftPlayer 到 Channel 的字段链。生产代码不导入 net.minecraft 类，管线锚点逐连接核对。
+- v2 邀请为 UUID 16 字节 + 后端实际协议号 4 字节；ACK 频道含协议号和会话。v2 offer/data/stop/ack 与旧隧道隔离，旧客户端保持原版，需两端升级 1.3.0。直连 v1 线格式保持不变。
+- server-compat：Paper 26.1.1/26.1.2/26.2/26.3、Folia 26.2/26.3，默认 Build 覆盖 Folia 26.1.2；发布依赖全部成功。PublishedAdapterTest 用同一个主构建 Jar 在目标开发运行库中链接，不能替换为只重新编译源码。
+- 客户端已有 26.1～26.3 CI 矩阵，Loader 声明允许后续 26.x，但未知 Mixin 仍可能需更新；不保证未来版本启动。服务端 26.1 无独立开发包，未单独证明。
+- 本地不构建/不执行测试；用户自行负责游戏、服务器和 VC 验收。不主动启动任何接受测试，也不代用户接受 EULA。

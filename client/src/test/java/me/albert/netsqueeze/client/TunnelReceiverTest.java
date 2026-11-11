@@ -117,6 +117,17 @@ class TunnelReceiverTest {
     }
 
     @Test
+    void tunnelOfferNegotiatesProtocolInsteadOfMinecraftVersionString() {
+        UUID session = UUID.randomUUID();
+        int protocol = net.minecraft.SharedConstants.getProtocolVersion();
+        TunnelProtocol.Offer offer = TunnelProtocol.decodeOffer(TunnelProtocol.encodeOffer(session, protocol));
+        assertEquals(session, offer.session());
+        assertTrue(me.albert.netsqueeze.protocol.MinecraftVersions.protocolMatches(offer.protocol(), protocol));
+        assertFalse(me.albert.netsqueeze.protocol.MinecraftVersions.protocolMatches(offer.protocol(), protocol + 1));
+        assertThrows(IllegalArgumentException.class, () -> TunnelProtocol.decodeOffer(new byte[16]));
+    }
+
+    @Test
     void nativeCodecAndAccessorTargetsExist() throws Exception {
         assertNotNull(net.minecraft.network.PacketDecoder.class.getDeclaredField("protocolInfo"));
         assertNotNull(CustomPacketPayload.class.getDeclaredMethod("codec", CustomPacketPayload.FallbackProvider.class, List.class));

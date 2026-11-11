@@ -23,7 +23,7 @@
 本地禁止解析或构建，所以不能在本地产生真实依赖锁和 SHA-256 元数据。
 
 1. 将经审核的修改送到 GitHub 后，在可信修订上手动运行 **Dependency baseline**。
-2. 下载 `dependency-baseline` Artifact，检查 `gradle/verification-metadata.xml`、根目录的 `gradle.lockfile` 和客户端各版本的 `client/gradle-<版本>.lockfile`。
+2. 下载 `dependency-baseline` Artifact，检查 `gradle/verification-metadata.xml`、根目录各目标的 `gradle-<平台>-<开发包>.lockfile` 和客户端各版本的 `client/gradle-<版本>.lockfile`。
 3. 核对仓库来源、依赖坐标和校验值；首次下载的校验值仅是待审核基线，不是独立的可信证明。
 4. 经授权提交审核后的基线。后续构建使用 `--dependency-verification strict` 和 Gradle dependency locking。
 5. **在基线提交前，CI 会发出警告；缺少元数据时不能声称已经验证所有传递依赖。** 更新依赖时重复生成并审核差异，不能在 PR 构建中自动接受新校验值。
@@ -38,7 +38,7 @@ Gradle 分发本身已经固定 SHA-256；Action 使用固定提交并由 Depend
 | 握手切换、异常帧、回退 | Build / JUnit | 真实 EnableDetector；包对象解码由测试适配器替代，不证明完整游戏登录 |
 | 缓冲上限与资源生命周期 | Build / JUnit | 解压上限、非法长度、ByteBuf 释放、Promise、Channel 清理 |
 | 统计历史、配置解析 | Build / JUnit | TTL、离线容量、会话保护、配置类型和范围 |
-| 服务器启动/命令/停服 | Build / 手动 server-smoke | 仅维护者提供的特定 26.1.2 服务端 Jar，不证明客户端握手 |
+| 服务器启动/命令/停服 | Build / 手动 server-smoke | 仅维护者提供的目标 26+ 服务端 Jar，不证明客户端握手 |
 | 正版加密、真实 Fabric 玩家及其他网络插件共存 | 手工集成验收 | 必须分别实测，不能由单元测试或能编译推导兼容性 |
 
 ## 手动服务器烟测
@@ -60,8 +60,16 @@ Gradle 分发本身已经固定 SHA-256；Action 使用固定提交并由 Depend
 
 ## 新增 Velocity 传输（1.2.0）
 
-GoldenCarrot服务器的代理方案和验收清单见 [docs/VELOCITY.md](docs/VELOCITY.md)。不添加 VC 插件。新隧道只确认同版本 26.1.2；其他版本仍可保持原版连接，不能宣称隧道已经加速。
+GoldenCarrot服务器的代理方案和验收清单见 [docs/VELOCITY.md](docs/VELOCITY.md)。不添加 VC 插件。1.3.0 改为 v2 协议协商：运行时协议号一致才启用，26.2 和 26.3 不再被固定字符串拒绝；协议不同维持原版。
 
 测试夹具现同时包含直连帧和带 UUID/序号的真实隧道载荷。`client-compat` 在 GitHub 分别针对 26.1、26.1.1、26.2、26.3 编译并检查新增原版接口；26.1.2 在主 Build 验证。Release 依赖这些 job 全部成功，但纯编译/API 检查不能证明真实 Fabric Mixin 启动与代理互通。
 
 依赖基线生成会遍历这些版本，并分别生成 `client/gradle-<版本>.lockfile`，审核时一并提交。手动服务器 smoke 仍不包含真实 VC 或 Fabric 客户端，不能拿它证明代理压缩收益。
+
+## 1.3.0 多版本服务端
+
+- 默认发布基线仍固定 Folia 26.1.2 开发包，生产代码不直接引用 CraftPlayer/NMS 类；易变签名集中在缓存 PacketAccess/ChannelAccess。
+- server-compat 在 Paper 26.1.1/26.1.2/26.2/26.3 和 Folia 26.2/26.3 上执行适配器测试，还通过隔离类加载器加载主 Build 的同一发布 Jar，不用“重新编译能过”冒充发布 Jar 可链接。
+- 运行时只接受 26+ 正式版字符串，实际 API 形状必须通过检查才注册网络处理器。26.1 无独立 Paper 开发包未单独证明；未来版本属于能力探测/待验证，不承诺永远兼容。
+- 客户端 CI 仍覆盖已发布 26.1～26.3，Fabric 声明放宽到后续 26.x；未知 Mixin 签名仍可能需要适配，不能保证未来客户端启动。
+- 不主动运行服务器/游戏验收；用户负责实际 Canvas/Paper/Folia、VC、ViaVersion 和 Fabric 安装验证。没有自动接受 EULA。

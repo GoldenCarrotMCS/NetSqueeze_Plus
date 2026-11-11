@@ -1,19 +1,16 @@
 package me.albert.netsqueeze.tunnel
 
 import me.albert.netsqueeze.protocol.TunnelProtocol as Wire
-import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket
-import net.minecraft.network.protocol.common.custom.DiscardedPayload
-import net.minecraft.resources.Identifier
-import java.nio.ByteBuffer
+import me.albert.netsqueeze.platform.ServerNetwork
 import java.util.UUID
 
 internal object TunnelProtocol {
-    val OFFER: Identifier = Identifier.fromNamespaceAndPath("netsqueeze", Wire.OFFER_PATH)
-    val STOP: Identifier = Identifier.fromNamespaceAndPath("netsqueeze", Wire.STOP_PATH)
-    val DATA: Identifier = Identifier.fromNamespaceAndPath("netsqueeze", Wire.DATA_PATH)
-
-    fun ack(session: UUID): Identifier = Identifier.fromNamespaceAndPath("netsqueeze", Wire.ackPath(session))
-    fun offer(session: UUID) = packet(OFFER, ByteBuffer.allocate(16)
-        .putLong(session.mostSignificantBits).putLong(session.leastSignificantBits).array())
-    fun packet(id: Identifier, bytes: ByteArray) = ClientboundCustomPayloadPacket(DiscardedPayload(id, bytes))
+    val OFFER: Any by lazy { ServerNetwork.packetAccess().id(Wire.OFFER_PATH) }
+    val STOP: Any by lazy { ServerNetwork.packetAccess().id(Wire.STOP_PATH) }
+    val DATA: Any by lazy { ServerNetwork.packetAccess().id(Wire.DATA_PATH) }
+    fun ack(session: UUID, protocol: Int = ServerNetwork.protocolVersion()): Any =
+        ServerNetwork.packetAccess().id(Wire.ackPath(session, protocol))
+    fun offer(session: UUID, protocol: Int = ServerNetwork.protocolVersion()): Any =
+        packet(OFFER, Wire.encodeOffer(session, protocol))
+    fun packet(id: Any, bytes: ByteArray): Any = ServerNetwork.packetAccess().packet(id, bytes)
 }

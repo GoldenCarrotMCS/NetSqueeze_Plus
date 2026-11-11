@@ -4,7 +4,7 @@ name: NetSqueeze
 version: '${version}'
 # Bukkit 插件入口。
 main: me.albert.netsqueeze.NetSqueeze
-# Bukkit API 最低声明；实际 NMS 版本另由启动检查限定为 26.1.2。
+# Bukkit API 最低声明；26+ 网络接口在启动时另做能力检查。
 api-version: '1.21'
 # 采用连接自己的 Netty 线程，不使用传统全局 Bukkit 定时任务。
 folia-supported: true

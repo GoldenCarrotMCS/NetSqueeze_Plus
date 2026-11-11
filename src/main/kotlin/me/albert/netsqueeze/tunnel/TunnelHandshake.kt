@@ -2,11 +2,11 @@ package me.albert.netsqueeze.tunnel
 
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
-import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket
+import me.albert.netsqueeze.platform.ServerNetwork
 
 internal class TunnelHandshake(private val bridge: TunnelCompressor) : ChannelInboundHandlerAdapter() {
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
-        if (msg is ServerboundCustomPayloadPacket && msg.payload().type().id() == TunnelProtocol.ack(bridge.session)) {
+        if (ServerNetwork.packetAccess().payloadId(msg) == TunnelProtocol.ack(bridge.session, bridge.protocol)) {
             bridge.acknowledge()
             return
         }

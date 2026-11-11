@@ -9,8 +9,8 @@ import io.netty.util.ReferenceCountUtil
 import io.netty.util.concurrent.PromiseNotifier
 import me.albert.netsqueeze.stats.PlayerTally
 import me.albert.netsqueeze.stats.StreamStats
-import net.minecraft.network.HandlerNames
-import net.minecraft.network.VarInt
+import me.albert.netsqueeze.platform.NetworkNames as HandlerNames
+import me.albert.netsqueeze.platform.VarInts as VarInt
 import java.nio.channels.ClosedChannelException
 
 /**

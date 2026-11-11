@@ -12,7 +12,7 @@ import me.albert.netsqueeze.stats.PlayerTally
 import me.albert.netsqueeze.stats.StreamStats
 import me.albert.netsqueeze.stats.TunnelStats
 import me.albert.netsqueeze.stream.FrameDeflater
-import net.minecraft.network.VarInt
+import me.albert.netsqueeze.platform.VarInts as VarInt
 import java.nio.ByteBuffer
 import java.nio.channels.ClosedChannelException
 import java.util.UUID
@@ -36,12 +36,13 @@ internal class TunnelCompressor(
     @Volatile
     var enabled = false
         private set
+    val protocol: Int = me.albert.netsqueeze.platform.ServerNetwork.protocolVersion()
     var candidate = false
 
     override fun handlerAdded(ctx: ChannelHandlerContext) { context = ctx }
 
     fun offer() {
-        if (!closed && playing && !enabled) context.channel().writeAndFlush(TunnelProtocol.offer(session))
+        if (!closed && playing && !enabled) context.channel().writeAndFlush(TunnelProtocol.offer(session, protocol))
     }
 
     fun inboundPlayPacket() {

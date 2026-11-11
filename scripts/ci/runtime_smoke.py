@@ -59,7 +59,7 @@ def main():
             if "Done (" in line:
                 break
         if not any("已加载" in line and "[NetSqueeze]" in line for line in lines):
-            raise RuntimeError("NetSqueeze did not enable; expected Minecraft 26.1.2")
+            raise RuntimeError("NetSqueeze did not enable; expected a supported Minecraft 26+ release with matching network APIs")
         # Console commands are queued in order. Wait for evidence before requesting stop.
         process.stdin.write("nsq\nnsq players\nnsq reset\nnsq pipeline\n")
         process.stdin.flush()

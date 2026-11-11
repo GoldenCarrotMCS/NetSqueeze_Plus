@@ -20,10 +20,25 @@ class NetSqueeze : JavaPlugin() {
         instance = this
         val serverVersion = server.minecraftVersion
         if (!ServerNetwork.supports(serverVersion)) {
-            logger.severe("NetSqueeze 只支持已验证的 Minecraft ${ServerNetwork.SUPPORTED_VERSION}，当前服务器是 $serverVersion；插件将禁用。")
+            logger.severe("NetSqueeze 要求 Minecraft ${ServerNetwork.SUPPORTED_VERSION}，当前服务器是 $serverVersion；插件将禁用。")
             server.pluginManager.disablePlugin(this)
             return
         }
+        try {
+            ServerNetwork.initialize(serverVersion)
+        } catch (e: Exception) {
+            logger.severe("Minecraft $serverVersion 网络 API 能力检查失败：${e.javaClass.simpleName}: ${e.message}；未注入网络处理器，请更新插件。")
+            server.pluginManager.disablePlugin(this)
+            return
+        } catch (e: LinkageError) {
+            logger.severe("Minecraft $serverVersion 服务端 API 链接失败：${e.message}；未注入网络处理器。")
+            server.pluginManager.disablePlugin(this)
+            return
+        }
+        if (serverVersion !in me.albert.netsqueeze.protocol.MinecraftVersions.CI_VERSIONS) {
+            logger.warning("Minecraft $serverVersion 未进入已发布版本 CI 矩阵；能力检查通过不等于完整运行时兼容保证。")
+        }
+        logger.info("Minecraft $serverVersion，协议号 ${ServerNetwork.protocolVersion()}，网络 API 检查通过")
         saveDefaultConfig()
         val settings = try {
             Settings.load(config)

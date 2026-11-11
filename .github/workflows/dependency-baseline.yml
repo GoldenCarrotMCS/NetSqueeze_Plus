@@ -10,7 +10,7 @@ permissions:
 jobs:
   baseline:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
@@ -29,13 +29,18 @@ jobs:
           for version in 26.1 26.1.1 26.2 26.3; do
             ./gradlew :client:build -PminecraftVersion="$version" --no-daemon --stacktrace --write-locks --write-verification-metadata sha256
           done
+          for target in paper:26.1.1.build.29-alpha paper:26.1.2.build.74-stable paper:26.2.build.135-stable paper:26.3.build.248-stable folia:26.2.build.7-beta folia:26.3.build.6-alpha; do
+            platform="${target%%:*}"
+            bundle="${target#*:}"
+            ./gradlew test -PserverPlatform="$platform" -PserverBundle="$bundle" --no-daemon --stacktrace --write-locks --write-verification-metadata sha256
+          done
       - name: Upload baseline for human review (never auto-commit)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dependency-baseline
           path: |
             gradle/verification-metadata.xml
-            gradle.lockfile
+            gradle-*.lockfile
             client/gradle-*.lockfile
           if-no-files-found: error
           retention-days: 14

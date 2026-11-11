@@ -19,7 +19,7 @@ on:
         type: boolean
         default: false
       server_jar_url:
-        description: '烟测服务器 Jar 的可信 HTTPS 下载地址，必须为 Minecraft 26.1.2'
+        description: '烟测服务器 Jar 的可信 HTTPS 下载地址，必须为 Minecraft 26+ 正式版本'
         type: string
       server_jar_sha256:
         description: '服务器 Jar 的 SHA-256，烟测时必填'
@@ -110,12 +110,73 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  server-compat:
+    name: Server API ${{ matrix.platform }} ${{ matrix.minecraft }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: paper
+            minecraft: '26.1.1'
+            bundle: '26.1.1.build.29-alpha'
+          - platform: paper
+            minecraft: '26.1.2'
+            bundle: '26.1.2.build.74-stable'
+          - platform: paper
+            minecraft: '26.2'
+            bundle: '26.2.build.135-stable'
+          - platform: paper
+            minecraft: '26.3'
+            bundle: '26.3.build.248-stable'
+          - platform: folia
+            minecraft: '26.2'
+            bundle: '26.2.build.7-beta'
+          - platform: folia
+            minecraft: '26.3'
+            bundle: '26.3.build.6-alpha'
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        with:
+          cache-read-only: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: NetSqueeze
+          path: published
+      - name: Test exact baseline JAR against target server APIs
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          BUNDLE: ${{ matrix.bundle }}
+        run: |
+          chmod +x gradlew
+          jars=(published/*-all.jar)
+          test "${#jars[@]}" = 1
+          ./gradlew test -PserverPlatform="$PLATFORM" -PserverBundle="$BUNDLE" -PadapterJar="${jars[0]}" --no-daemon --stacktrace --dependency-verification strict
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: server-tests-${{ matrix.platform }}-${{ matrix.minecraft }}
+          path: |
+            build/reports/tests/
+            build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
   release:
     name: Publish verified JARs
     if: >-
       github.actor != 'dependabot[bot]' && startsWith(github.ref, 'refs/heads/') &&
       (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_jars))
-    needs: [build, client-compat]
+    needs: [build, client-compat, server-compat]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

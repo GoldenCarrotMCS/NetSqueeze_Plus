@@ -6,6 +6,8 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.CorruptedFrameException;
 import me.albert.netsqueeze.client.mixin.PacketDecoderAccessor;
 import me.albert.netsqueeze.protocol.TunnelProtocol;
+import me.albert.netsqueeze.protocol.MinecraftVersions;
+import net.minecraft.SharedConstants;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.HandlerNames;
@@ -36,18 +38,24 @@ final class TunnelClientHandler extends ChannelInboundHandlerAdapter {
             if (payload.id().equals(TunnelPayload.OFFER)) {
                 String version = FabricLoader.getInstance().getModContainer("minecraft").orElseThrow()
                     .getMetadata().getVersion().getFriendlyString();
-                if (!TunnelProtocol.MINECRAFT_VERSION.equals(version)) return;
+                if (!MinecraftVersions.eligible(version)) return;
+                TunnelProtocol.Offer offer = TunnelProtocol.decodeOffer(payload.data());
+                int localProtocol = SharedConstants.getProtocolVersion();
+                if (!MinecraftVersions.protocolMatches(offer.protocol(), localProtocol)) {
+                    NetSqueezeClient.LOGGER.info("代理隧道保持原版：后端协议 {} 与客户端协议 {} 不同，不能绕过版本转换", offer.protocol(), localProtocol);
+                    return;
+                }
                 if (!(ctx.pipeline().get(HandlerNames.DECODER) instanceof PacketDecoderAccessor)) {
                     NetSqueezeClient.LOGGER.warn("NetSqueeze 隧道未启用：当前解码器不是已验证的原版实现");
                     return;
                 }
                 if (protocol(ctx).id() != ConnectionProtocol.PLAY) return;
-                UUID session = session(payload.data());
+                UUID session = offer.session();
                 if (receiver == null || !receiver.session.equals(session)) {
                     reset();
                     receiver = new TunnelReassembler(session);
                 }
-                Identifier ack = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.ackPath(session));
+                Identifier ack = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.ackPath(session, localProtocol));
                 ctx.channel().writeAndFlush(new ServerboundCustomPayloadPacket(new DiscardedPayload(ack)));
                 NetSqueezeClient.LOGGER.info("GoldenCarrot服务器兼容模式：已协商 Velocity 压缩隧道（无需代理插件）");
             } else if (payload.id().equals(TunnelPayload.STOP)) {

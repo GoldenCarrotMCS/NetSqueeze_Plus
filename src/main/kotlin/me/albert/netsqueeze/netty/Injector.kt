@@ -17,7 +17,7 @@ import me.albert.netsqueeze.stream.HelloHandler
 import me.albert.netsqueeze.stream.Protocol
 import me.albert.netsqueeze.stream.StreamCompressor
 import net.kyori.adventure.key.Key
-import net.minecraft.network.HandlerNames
+import me.albert.netsqueeze.platform.NetworkNames as HandlerNames
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
@@ -150,6 +150,11 @@ internal object Injector : Listener {
             channels.forget(channel)
             return
         }
+        if (channel.pipeline().get(HandlerNames.PACKET_HANDLER) == null ||
+            channel.pipeline().get(HandlerNames.PREPENDER) == null) {
+            logger.warning("连接管线缺少已验证锚点，保留原版传输：${channel.pipeline().names()}")
+            return
+        }
         if (!useTunnel) channel.pipeline().addBefore(HandlerNames.PACKET_HANDLER, HELLO, HelloHandler())
     }
 
@@ -162,6 +167,10 @@ internal object Injector : Listener {
             val pipeline = channel.pipeline()
             // 在 netty 线程上查 stopped:置位后才跑到这里的一律不挂;置位前已经挂上的,摘除任务排在它后面会摘掉
             if (stopped || !channel.isActive) return@execute
+            if (pipeline.get(HandlerNames.PREPENDER) == null || pipeline.get(HandlerNames.ENCODER) == null) {
+                logger.warning("连接缺少编码管线锚点，保持原版传输：${pipeline.names()}")
+                return@execute
+            }
             // 没有 v1 则保留标准链；代理客户端仍可能在 PLAY 完成隧道协商。
             removeIfPresent(pipeline, HELLO)
             val stream = pipeline.get(STREAM) as? StreamCompressor

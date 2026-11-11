@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "me.albert"
-version = "1.2.0"
+version = "1.3.0"
 
 sourceSets.main { java.srcDir("shared/src/main/java") }
 
@@ -29,8 +29,17 @@ kotlin {
     compilerOptions { jvmTarget = JvmTarget.JVM_25 }
 }
 
+// CI pins both platform and bundle instead of resolving a changing + version.
+val serverPlatform = providers.gradleProperty("serverPlatform").getOrElse("folia")
+val serverBundle = providers.gradleProperty("serverBundle").getOrElse("26.1.2.build.8-stable")
+dependencyLocking { lockFile.set(layout.projectDirectory.file("gradle-$serverPlatform-$serverBundle.lockfile")) }
+
 dependencies {
-    paperweight.foliaDevBundle("26.1.2.build.8-stable")
+    when (serverPlatform) {
+        "paper" -> paperweight.paperDevBundle(serverBundle)
+        "folia" -> paperweight.foliaDevBundle(serverBundle)
+        else -> error("serverPlatform must be paper or folia")
+    }
     // 公开版不依赖别的插件提供 Kotlin 运行库,打进 jar
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
     testImplementation(kotlin("test-junit5"))
@@ -63,6 +72,10 @@ val protocolFixtures = layout.buildDirectory.dir("protocol-fixtures")
 tasks.test {
     useJUnitPlatform()
     systemProperty("netsqueeze.fixtures", protocolFixtures.get().asFile.absolutePath)
+    providers.gradleProperty("adapterJar").orNull?.let { path ->
+        systemProperty("netsqueeze.adapterJar", file(path).absolutePath)
+        inputs.file(file(path))
+    }
     outputs.dir(protocolFixtures)
 }
 
