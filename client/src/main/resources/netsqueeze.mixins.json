@@ -5,7 +5,9 @@
   "client": [
     "ClientHandshakePacketListenerImplMixin",
     "ConnectionAccessor",
-    "ConnectionMixin"
+    "ConnectionMixin",
+    "CustomPayloadCodecMixin",
+    "PacketDecoderAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -1,9 +1,7 @@
 package me.albert.netsqueeze.stats
 
-import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.LongAdder
 
 /** 估 TCP 段数用的 MSS,以太网 1500 减 IP/TCP 头 */
@@ -18,7 +16,10 @@ internal fun segmentsOf(bytes: Long): Long = (bytes + MSS - 1) / MSS
  * 一个玩家的累计量。处理器都在这条连接的 netty 线程上写,命令线程读。
  * wire 是实际发出去的字节;raw(未压缩的包)只有装了 mod 的([streaming])才量,没装的不量
  */
-internal class PlayerTally(val name: String) {
+internal class PlayerTally(@Volatile var name: String) {
+    @Volatile
+    var tunnel = false
+
     val raw = LongAdder()
     val wire = LongAdder()
 
@@ -27,8 +28,8 @@ internal class PlayerTally(val name: String) {
         private set
 
     /**
-     * 每次进服调:这次和上次装没装 mod 不一样就清零重来。表按 UUID 存、下线不清,同一个人换着客户端进,
-     * 两种口径(raw 只有装 mod 才量)攒进同一份,排行就会出现"原始 0 B → 出网 600 MB"这种数
+     * 每次进服调:这次和上次装没装 mod 不一样就清零重来。表按 UUID 存、下线暂时保留历史，
+     * 但由 [TrafficStats] 的 TTL 和容量上限负责淘汰。
      */
     fun startSession(streaming: Boolean) {
         if (this.streaming == streaming) return
@@ -48,6 +49,8 @@ internal class PlayerTally(val name: String) {
  */
 internal object TrafficStats {
 
+    private val history = PlayerHistory()
+
     val wire = LongAdder()
     val wireFlushes = LongAdder()
     val wireSegments = LongAdder()
@@ -64,9 +67,15 @@ internal object TrafficStats {
     @Volatile
     var sampleStreamPipeline: List<String> = emptyList()
 
-    val players = ConcurrentHashMap<UUID, PlayerTally>()
+    @Volatile
+    var sampleTunnelPipeline: List<String> = emptyList()
 
-    fun tally(player: Player): PlayerTally = players.computeIfAbsent(player.uniqueId) { PlayerTally(player.name) }
+    val players get() = history.entries
+
+    fun tally(player: Player, session: Any): PlayerTally =
+        history.open(player.uniqueId, player.name, session)
+
+    fun endSession(uuid: UUID, session: Any) = history.retire(uuid, session)
 
     fun recordWire(tally: PlayerTally, bytes: Long) {
         tally.wire.add(bytes)
@@ -77,9 +86,7 @@ internal object TrafficStats {
 
     fun reset() {
         listOf(wire, wireFlushes, wireSegments).forEach { it.reset() }
-        // 在线的保留(处理器手里攥着这份 tally),下线的趁清零丢掉
-        players.keys.removeIf { Bukkit.getPlayer(it) == null }
-        players.values.forEach { it.reset() }
+        history.reset()
         since = System.currentTimeMillis()
     }
 }

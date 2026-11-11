@@ -5,6 +5,8 @@ import io.netty.channel.ChannelPipeline;
 import javax.crypto.Cipher;
 import me.albert.netsqueeze.client.NetSqueezeClient;
 import net.minecraft.network.Connection;
+import net.minecraft.network.ProtocolInfo;
+import net.minecraft.network.PacketListener;
 import net.minecraft.network.protocol.PacketFlow;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -33,4 +35,9 @@ public abstract class ConnectionMixin {
         if (this.getReceiving() != PacketFlow.CLIENTBOUND) return;
         NetSqueezeClient.moveAfterDecrypt(this.channel.pipeline());
     }
+    @Inject(method = "setupInboundProtocol", at = @At("TAIL"))
+    private void netsqueeze$tunnel(final ProtocolInfo<?> protocol, final PacketListener listener, final CallbackInfo ci) {
+        if (this.getReceiving() == PacketFlow.CLIENTBOUND) NetSqueezeClient.installTunnel(this.channel);
+    }
+
 }

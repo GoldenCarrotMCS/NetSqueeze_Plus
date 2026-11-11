@@ -12,12 +12,9 @@ import java.util.zip.Deflater
  * SYNC_FLUSH 保证每帧解压出来都是整包,不会有半个包留到下一帧。
  * 不加锁,只在一条连接的 netty 线程上用。
  */
-internal class FrameDeflater(private val alloc: ByteBufAllocator) {
+internal class FrameDeflater(private val alloc: ByteBufAllocator, level: Int = 6) {
 
     private companion object {
-        /** 和 Paper 默认(Velocity natives,compression-level -1)同一档 */
-        const val LEVEL = 6
-
         /** 帧开头先空出 varint 帧长的最大字节数,压完再回填,省一次拷贝 */
         const val HEADER = VarInt.MAX_VARINT_SIZE
 
@@ -28,9 +25,10 @@ internal class FrameDeflater(private val alloc: ByteBufAllocator) {
     }
 
     /** nowrap:帧里不需要 zlib 头和校验和 */
-    private val deflater = Deflater(LEVEL, true)
+    private val deflater = Deflater(level, true)
     private val lengthPrefix = ByteArray(VarInt.MAX_VARINT_SIZE)
     private var frame: ByteBuf? = null
+    private var closed = false
 
     /** 本帧已喂的原始字节(含包长前缀),[finish] 后清零 */
     var pendingRaw = 0L
@@ -40,6 +38,7 @@ internal class FrameDeflater(private val alloc: ByteBufAllocator) {
         private set
 
     fun feed(buf: ByteBuf) {
+        check(!closed) { "deflater closed" }
         val out = frame ?: alloc.directBuffer(INITIAL).also {
             it.writerIndex(HEADER)
             frame = it
@@ -58,7 +57,7 @@ internal class FrameDeflater(private val alloc: ByteBufAllocator) {
     /** 收尾成一帧交给调用方(由调用方释放);本帧一个包都没有时返回 null */
     fun finish(): ByteBuf? {
         val out = frame ?: return null
-        frame = null
+        // finish 异常时仍由 close 持有并释放缓冲，不能提前丢掉所有权。
         deflate(out, Deflater.SYNC_FLUSH)
         val end = out.writerIndex()
         val body = end - HEADER
@@ -67,6 +66,7 @@ internal class FrameDeflater(private val alloc: ByteBufAllocator) {
         VarInt.write(out, body)
         out.writerIndex(end)
         out.readerIndex(start)
+        frame = null
         pendingRaw = 0
         pendingPackets = 0
         return out
@@ -74,6 +74,8 @@ internal class FrameDeflater(private val alloc: ByteBufAllocator) {
 
     /** deflate 流占着原生内存,连接关闭或出错时必须调 */
     fun close() {
+        if (closed) return
+        closed = true
         deflater.end()
         frame?.release()
         frame = null

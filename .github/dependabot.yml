@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # 每周检查工作流引用；SHA 固定不妨碍自动提出更新 PR。
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # Gradle 更新仍需通过协议对拍和对应版本的运行时验证。
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

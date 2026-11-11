@@ -1,0 +1,14 @@
+# 是否启用插件；关闭时不注册网络处理器，修改后重启生效。
+enabled: true
+# deflate 压缩级别，0..9；越高越耗 CPU，默认 6。
+compression-level: 6
+# 单帧未压缩数据上限（包含包长前缀），1024..8388608 字节。
+# 超限前提前收帧，不主动 flush；不能扩大客户端协议的固定安全上限。
+max-frame-raw-bytes: 8388608
+# 每个统计周期只打印第一条压缩错误堆栈；/nsq reset 会重置周期。
+log-first-failure: true
+# auto 读取后端 Paper 的代理转发配置；无法确认时使用安全隧道。
+# 通过 VC 的服务器建议明确设为 velocity；仅真正直连可设 direct，不能把底层流发给代理。
+transport-mode: auto
+# 小于此大小的白名单原包不进隧道，避免 UUID/频道名等固定开销使小包反而变大；64..8388608。
+tunnel-min-packet-bytes: 256

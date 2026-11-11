@@ -5,66 +5,174 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_server_smoke:
+        description: '运行服务器启动/命令/停服烟测（不会测试真实玩家握手）'
+        type: boolean
+        default: false
+      accept_minecraft_eula:
+        description: '已阅读并接受 https://aka.ms/MinecraftEULA（烟测必须明确勾选）'
+        type: boolean
+        default: false
+      server_jar_url:
+        description: '烟测服务器 Jar 的可信 HTTPS 下载地址，必须为 Minecraft 26.1.2'
+        type: string
+      server_jar_sha256:
+        description: '服务器 Jar 的 SHA-256，烟测时必填'
+        type: string
 
 permissions:
-  contents: write # 自动建 tag 和 Release 要用
+  contents: read
+
+concurrency:
+  group: netsqueeze-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
           java-version: 25
-
-      # 缓存 ~/.gradle(依赖、paperweight 与 Loom 反编译出的 Minecraft),不缓存每次都要重新反编译好几分钟
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Build
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Build and protocol regression tests
         run: |
+          if [ ! -f gradle/verification-metadata.xml ]; then
+            echo '::warning::Dependency baseline not yet committed. Run Dependency baseline on a trusted revision and review its artifact.'
+          fi
           chmod +x gradlew
-          ./gradlew build --no-daemon
-
-      - uses: actions/upload-artifact@v4
+          ./gradlew build --no-daemon --stacktrace --dependency-verification strict
+      - name: Verify packaged jars and generate SHA-256
+        run: python -I scripts/ci/verify_artifacts.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: NetSqueeze
-          path: |
-            build/libs/*-all.jar
-            client/build/libs/NetSqueeze-Client-*.jar
+          path: dist/*
           if-no-files-found: error
+          retention-days: 14
+      - name: Upload test evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests/
+            build/test-results/
+            client/build/reports/tests/
+            client/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
 
-      # 发版不用手动打 tag:推到 master 时读插件版本号,GitHub 上还没有 v<版本号> 的 Release 就自动建 tag 并发布;
-      # 版本号没改的普通提交只构建不发版
-      - name: Read version
-        id: ver
+  client-compat:
+    name: Client API checks ${{ matrix.minecraft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        minecraft: ['26.1', '26.1.1', '26.2', '26.3']
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        with:
+          cache-read-only: true
+      - name: Compile client and verify native API targets
+        env:
+          MC_VERSION: ${{ matrix.minecraft }}
         run: |
-          version=$(tr -d '\r' < build.gradle.kts | sed -n 's/^version = "\(.*\)"$/\1/p')
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          chmod +x gradlew
+          ./gradlew :client:build -PminecraftVersion="$MC_VERSION" --no-daemon --stacktrace --dependency-verification strict
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: client-tests-${{ matrix.minecraft }}
+          path: client/build/reports/tests/
+          if-no-files-found: warn
+          retention-days: 14
 
-      - name: Check release
-        id: rel
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [build, client-compat]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: NetSqueeze
+          path: dist
+      - name: Check release and tag (fail on authentication or API errors)
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
+        run: python -I scripts/ci/check_release.py
+      - name: Publish verified build outputs
+        if: steps.release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          if gh release view "v${{ steps.ver.outputs.version }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          cd dist
+          sha256sum --check SHA256SUMS.txt
+          gh release create "v$VERSION" "NetSqueeze-$VERSION-all.jar" "NetSqueeze-Client-$VERSION.jar" SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "NetSqueeze $VERSION" --generate-notes
 
-      - name: Release
-        if: steps.rel.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
+  server-smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_server_smoke
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require explicit EULA acceptance
+        env:
+          ACCEPT_EULA: ${{ inputs.accept_minecraft_eula }}
+        run: test "$ACCEPT_EULA" = true
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          tag_name: v${{ steps.ver.outputs.version }}
-          target_commitish: ${{ github.sha }}
-          name: NetSqueeze ${{ steps.ver.outputs.version }}
-          files: |
-            build/libs/*-all.jar
-            client/build/libs/NetSqueeze-Client-*.jar
-          generate_release_notes: true
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: NetSqueeze
+          path: dist
+      - name: Download pinned server to isolated directory
+        env:
+          SERVER_URL: ${{ inputs.server_jar_url }}
+          SERVER_SHA256: ${{ inputs.server_jar_sha256 }}
+        run: |
+          [[ "$SERVER_URL" == https://* ]]
+          [[ "$SERVER_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
+          mkdir "$RUNNER_TEMP/nsq-server-download"
+          curl --fail --location --max-time 120 --proto '=https' --proto-redir '=https' "$SERVER_URL" -o "$RUNNER_TEMP/nsq-server-download/server.jar"
+          printf '%s  %s\n' "$SERVER_SHA256" "$RUNNER_TEMP/nsq-server-download/server.jar" | sha256sum --check
+      - name: Startup, commands, shutdown
+        run: |
+          python -I scripts/ci/runtime_smoke.py --server-jar "$RUNNER_TEMP/nsq-server-download/server.jar" \
+            --plugin-jar dist/*-all.jar --runtime-dir "$RUNNER_TEMP/nsq-runtime" --accept-eula
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: server-smoke-logs
+          path: ${{ runner.temp }}/nsq-runtime/logs/
+          if-no-files-found: warn

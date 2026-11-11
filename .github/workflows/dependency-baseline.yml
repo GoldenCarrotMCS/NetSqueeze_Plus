@@ -1,0 +1,41 @@
+name: Dependency baseline
+
+# 仅由维护者在已审核的提交上手动生成；不能把 PR 首次下载的依赖当成可信基线。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        with:
+          cache-read-only: true
+      - name: Generate locks and SHA-256 verification metadata
+        run: |
+          chmod +x gradlew
+          ./gradlew build --no-daemon --stacktrace --write-locks --write-verification-metadata sha256
+          for version in 26.1 26.1.1 26.2 26.3; do
+            ./gradlew :client:build -PminecraftVersion="$version" --no-daemon --stacktrace --write-locks --write-verification-metadata sha256
+          done
+      - name: Upload baseline for human review (never auto-commit)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-baseline
+          path: |
+            gradle/verification-metadata.xml
+            gradle.lockfile
+            client/gradle-*.lockfile
+          if-no-files-found: error
+          retention-days: 14

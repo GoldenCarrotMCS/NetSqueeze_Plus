@@ -1,0 +1,40 @@
+package me.albert.netsqueeze.config
+
+import org.bukkit.configuration.file.FileConfiguration
+
+/** 仅读取一次；压缩器持有不可变快照，配置修改需要重启。 */
+internal data class Settings(
+    val enabled: Boolean = true,
+    val compressionLevel: Int = 6,
+    val maxFrameRawBytes: Int = 8 * 1024 * 1024,
+    val logFirstFailure: Boolean = true,
+    val transportMode: TransportMode = TransportMode.AUTO,
+    val tunnelMinPacketBytes: Int = 256
+) {
+    init {
+        require(tunnelMinPacketBytes in 64..8 * 1024 * 1024) { "tunnel-min-packet-bytes 必须在 64..8388608 之间" }
+        require(compressionLevel in 0..9) { "compression-level 必须在 0..9 之间" }
+        require(maxFrameRawBytes in 1024..8 * 1024 * 1024) {
+            "max-frame-raw-bytes 必须在 1024..8388608 之间，不能超过协议安全边界"
+        }
+    }
+
+    companion object {
+        fun load(config: FileConfiguration): Settings {
+            for (key in listOf("enabled", "log-first-failure")) {
+                require(!config.contains(key) || config.isBoolean(key)) { "$key 必须是布尔值 true/false" }
+            }
+            for (key in listOf("compression-level", "max-frame-raw-bytes", "tunnel-min-packet-bytes")) {
+                require(!config.contains(key) || config.isInt(key)) { "$key 必须是整数" }
+            }
+            return Settings(
+                enabled = config.getBoolean("enabled", true),
+                compressionLevel = config.getInt("compression-level", 6),
+                maxFrameRawBytes = config.getInt("max-frame-raw-bytes", 8 * 1024 * 1024),
+                logFirstFailure = config.getBoolean("log-first-failure", true),
+                transportMode = TransportMode.parse(config.getString("transport-mode", "auto") ?: "auto"),
+                tunnelMinPacketBytes = config.getInt("tunnel-min-packet-bytes", 256)
+            )
+        }
+    }
+}

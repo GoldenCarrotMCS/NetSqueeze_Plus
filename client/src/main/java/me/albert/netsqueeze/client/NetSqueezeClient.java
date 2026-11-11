@@ -43,12 +43,25 @@ public final class NetSqueezeClient {
 
     /**
      * 正版服登录时原版把 decrypt 插在 splitter 前面,正好夹在解码器和 splitter 中间,解码器就会看到密文,得挪到 decrypt 后面。
-     * 这时服务端在等加密回应,不会有新字节进来,换个新实例不丢东西(本服是离线模式,走不到这里)
+     * 这时服务端在等加密回应,不会有新字节进来,换个新实例不丢东西(GoldenCarrot服务器的正版/代理链路需要单独验收)
      */
     public static void moveAfterDecrypt(final ChannelPipeline pipeline) {
         if (pipeline.get(HandlerNames.DECRYPT) == null || pipeline.get(StreamDecoder.NAME) == null) return;
         pipeline.remove(StreamDecoder.NAME);
         pipeline.addAfter(HandlerNames.DECRYPT, StreamDecoder.NAME, new StreamDecoder());
+    }
+
+    /** 新协议建立后重新放在 bundler 前；原版会把 bundler 插到 decoder 的紧后方。 */
+    public static void installTunnel(final Channel channel) {
+        if (channel == null) return;
+        Runnable install = () -> {
+            ChannelPipeline pipeline = channel.pipeline();
+            if (pipeline.get(HandlerNames.DECODER) == null) return;
+            if (pipeline.get(TunnelClientHandler.NAME) != null) pipeline.remove(TunnelClientHandler.NAME);
+            pipeline.addAfter(HandlerNames.DECODER, TunnelClientHandler.NAME, new TunnelClientHandler());
+        };
+        if (channel.eventLoop().inEventLoop()) install.run();
+        else channel.eventLoop().execute(install);
     }
 
     /** 登录完成、出站已切到配置协议后调;解码器没挂上(内存连接等)就不发,否则服务端一切换这边就解不了 */

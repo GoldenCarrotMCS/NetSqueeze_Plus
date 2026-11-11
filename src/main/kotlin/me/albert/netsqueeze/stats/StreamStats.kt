@@ -22,6 +22,9 @@ internal object StreamStats {
     /** 当前挂着真压缩的连接数,不随 reset 清零 */
     val active = AtomicInteger()
 
+    @Volatile
+    var logFirstFailure = true
+
     private val failureLogged = AtomicBoolean()
 
     /** [tally] 在进服前(配置阶段)还没绑上,这段只记全服 */
@@ -39,12 +42,13 @@ internal object StreamStats {
     /** 真压缩出错只能断开这条连接(客户端已切格式,退不回原版);堆栈全服只打第一条 */
     fun recordFailure(player: String, e: Throwable) {
         failures.increment()
-        if (!failureLogged.compareAndSet(false, true)) return
+        if (!logFirstFailure || !failureLogged.compareAndSet(false, true)) return
         logger.severe("流式压缩出错(玩家 $player),已断开该连接,之后的同类错误只计数不打印")
         e.printStackTrace()
     }
 
     fun reset() {
         listOf(raw, wire, packets, frames, segments, deflateNanos, failures).forEach { it.reset() }
+        failureLogged.set(false)
     }
 }
