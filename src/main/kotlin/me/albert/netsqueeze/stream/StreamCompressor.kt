@@ -24,7 +24,11 @@ import java.nio.channels.ClosedChannelException
  */
 internal class StreamCompressor(
     private val compressionLevel: Int = 6,
-    private val maxFrameRawBytes: Int = 8 * 1024 * 1024
+    private val maxFrameRawBytes: Int = 8 * 1024 * 1024,
+    private val useZstd: Boolean = false,
+    private val zstdMinPacketBytes: Int = 64 * 1024,
+    private val zstdLevel: Int = 1,
+    private val markedFrames: Boolean = true
 ) : ChannelOutboundHandlerAdapter() {
 
     /** 配置阶段切换时还不知道是谁,进服后由 Injector 绑上 */
@@ -37,7 +41,7 @@ internal class StreamCompressor(
     private var closed = false
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
-        deflater = FrameDeflater(ctx.alloc(), compressionLevel)
+        deflater = FrameDeflater(ctx.alloc(), compressionLevel, markedFrames)
         StreamStats.active.incrementAndGet()
     }
 
@@ -61,9 +65,18 @@ internal class StreamCompressor(
         }
 
         try {
+            require(msg.readableBytes() <= ZstdFrame.MAX_INPUT) { "NetSqueeze packet exceeds safety limit" }
+            if (markedFrames && useZstd && msg.readableBytes() >= zstdMinPacketBytes) {
+                if (deflater.pendingPackets > 0) emit(ctx)
+                val started = System.nanoTime()
+                if (emitZstd(ctx, msg, promise)) {
+                    return
+                }
+                pendingNanos += System.nanoTime() - started
+                // 不可压缩的小包/高熵大包回退 Deflate；此时没有推进 ZSTD 或 Deflate 字典。
+            }
             // 不新增 flush 或计时器；只提前写出完整子帧，限制缓存和 promise 数量。
             val size = msg.readableBytes().toLong() + VarInt.getByteSize(msg.readableBytes())
-            require(msg.readableBytes() <= 8 * 1024 * 1024) { "NetSqueeze packet exceeds frame safety limit" }
             if (deflater.pendingPackets > 0 &&
                 (deflater.pendingRaw + size > maxFrameRawBytes || deflater.pendingPackets >= 4096)) emit(ctx)
             val start = System.nanoTime()
@@ -128,6 +141,26 @@ internal class StreamCompressor(
         pendingNanos += System.nanoTime() - start
         StreamStats.record(tally, raw, size, packets, pendingNanos)
         pendingNanos = 0
+    }
+
+    private fun emitZstd(ctx: ChannelHandlerContext, msg: ByteBuf, original: ChannelPromise): Boolean {
+        val target = checkNotNull(ctx.pipeline().context(HandlerNames.PREPENDER)) {
+            "NetSqueeze prepender disappeared"
+        }
+        val started = System.nanoTime()
+        val frame = ZstdFrame.encode(ctx.alloc(), msg, zstdLevel) ?: return false
+        val raw = VarInt.getByteSize(msg.readableBytes()).toLong() + msg.readableBytes()
+        val frameBytes = frame.readableBytes().toLong()
+        val promise = ctx.newPromise()
+        promise.addListener { future ->
+            if (original.isVoid) Unit
+            else if (future.isSuccess) original.trySuccess()
+            else original.tryFailure(future.cause() ?: ClosedChannelException())
+            if (!future.isSuccess) fail(ctx, future.cause() ?: ClosedChannelException())
+        }
+        target.write(frame, promise)
+        StreamStats.recordZstd(tally, raw, frameBytes, System.nanoTime() - started)
+        return true
     }
 
     private fun framePromise(ctx: ChannelHandlerContext): ChannelPromise {

@@ -12,6 +12,7 @@ import me.albert.netsqueeze.stats.PlayerTally
 import me.albert.netsqueeze.stats.StreamStats
 import me.albert.netsqueeze.stats.TunnelStats
 import me.albert.netsqueeze.stream.FrameDeflater
+import me.albert.netsqueeze.stream.ZstdFrame
 import me.albert.netsqueeze.platform.VarInts as VarInt
 import java.nio.ByteBuffer
 import java.nio.channels.ClosedChannelException
@@ -37,12 +38,20 @@ internal class TunnelCompressor(
     var enabled = false
         private set
     val protocol: Int = me.albert.netsqueeze.platform.ServerNetwork.protocolVersion()
+    private val zstdAvailable = settings.zstdEnabled && ZstdFrame.available()
+    private var markedFrames = true
+    private var zstdEnabled = false
     var candidate = false
 
     override fun handlerAdded(ctx: ChannelHandlerContext) { context = ctx }
 
+    fun ack(zstd: Boolean, marked: Boolean = true): Any = TunnelProtocol.ack(session, protocol, marked = marked, zstd = zstd)
+
     fun offer() {
-        if (!closed && playing && !enabled) context.channel().writeAndFlush(TunnelProtocol.offer(session, protocol))
+        if (!closed && playing && !enabled) {
+            context.channel().write(TunnelProtocol.offer(session, protocol, marked = true, zstd = zstdAvailable))
+            context.channel().writeAndFlush(TunnelProtocol.offer(session, protocol, marked = false, zstd = false))
+        }
     }
 
     fun inboundPlayPacket() {
@@ -56,9 +65,11 @@ internal class TunnelCompressor(
         if (!closed && !playing) { playing = true; offer() }
     }
 
-    fun acknowledge() {
+    fun acknowledge(useZstd: Boolean = false, marked: Boolean = true) {
         if (closed || enabled || !playing || !context.channel().isActive) return
-        deflater = FrameDeflater(context.alloc(), settings.compressionLevel)
+        markedFrames = marked
+        zstdEnabled = marked && useZstd && zstdAvailable
+        deflater = FrameDeflater(context.alloc(), settings.compressionLevel, markedFrames)
         enabled = true
         tally.tunnel = true
         tally.raw.reset()
@@ -85,7 +96,11 @@ internal class TunnelCompressor(
             }
             val compressor = checkNotNull(deflater)
             val size = msg.readableBytes().toLong() + VarInt.getByteSize(msg.readableBytes())
-            require(msg.isReadable && msg.readableBytes() <= 8 * 1024 * 1024)
+            require(msg.isReadable && msg.readableBytes() <= ZstdFrame.MAX_INPUT)
+            if (zstdEnabled && msg.readableBytes() >= settings.zstdMinPacketBytes) {
+                if (compressor.pendingPackets > 0) emit()
+                if (emitZstd(msg, promise)) return
+            }
             val limit = minOf(settings.maxFrameRawBytes, 512 * 1024)
             if (compressor.pendingPackets > 0 &&
                 (compressor.pendingRaw + size > limit || compressor.pendingPackets >= 4096)) emit()
@@ -103,9 +118,23 @@ internal class TunnelCompressor(
         if (!enabled || compressor.pendingPackets == 0) return
         val raw = compressor.pendingRaw
         val frame = compressor.finish() ?: return
-        val completion = context.newPromise()
         val originals = pending.toList()
         pending.clear()
+        writeFrame(frame, raw, originals, zstd = false)
+    }
+
+    private fun emitZstd(msg: ByteBuf, promise: ChannelPromise): Boolean {
+        val frame = try { ZstdFrame.encode(context.alloc(), msg, settings.zstdLevel) }
+        catch (_: LinkageError) { null }
+        catch (_: RuntimeException) { null }
+        if (frame == null) return false
+        val raw = msg.readableBytes().toLong() + VarInt.getByteSize(msg.readableBytes())
+        writeFrame(frame, raw, if (promise.isVoid) emptyList() else listOf(promise), zstd = true)
+        return true
+    }
+
+    private fun writeFrame(frame: ByteBuf, raw: Long, originals: List<ChannelPromise>, zstd: Boolean) {
+        val completion = context.newPromise()
         completion.addListener { future ->
             originals.forEach {
                 if (future.isSuccess) it.trySuccess() else it.tryFailure(future.cause() ?: ClosedChannelException())
@@ -120,13 +149,17 @@ internal class TunnelCompressor(
                     .putLong(session.mostSignificantBits).putLong(session.leastSignificantBits).putLong(sequence)
                 sequence = Math.incrementExact(sequence)
                 frame.readBytes(payload.array(), Wire.HEADER_BYTES, length)
-                combined.add(context.channel().write(TunnelProtocol.packet(TunnelProtocol.DATA, payload.array())))
+                combined.add(context.channel().write(TunnelProtocol.packet(TunnelProtocol.data(markedFrames), payload.array())))
                 TunnelStats.payload.add(payload.array().size.toLong())
             }
             combined.finish(completion)
             tally.raw.add(raw)
             TunnelStats.raw.add(raw)
             TunnelStats.frames.increment()
+            if (zstd) {
+                TunnelStats.zstdRaw.add(raw)
+                TunnelStats.zstdFrames.increment()
+            }
         } catch (e: Throwable) {
             completion.tryFailure(e)
             throw e
@@ -144,7 +177,7 @@ internal class TunnelCompressor(
             emit()
             if (closed || !enabled) return
             val stop = ByteBuffer.allocate(16).putLong(session.mostSignificantBits).putLong(session.leastSignificantBits)
-            context.channel().write(TunnelProtocol.packet(TunnelProtocol.STOP, stop.array()))
+            context.channel().write(TunnelProtocol.packet(TunnelProtocol.stop(markedFrames), stop.array()))
             enabled = false
             tally.tunnel = false
             TunnelStats.active.decrementAndGet()

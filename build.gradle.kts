@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "me.albert"
-version = "1.3.0"
+version = "1.4.0"
 
 sourceSets.main { java.srcDir("shared/src/main/java") }
 
@@ -42,6 +42,7 @@ dependencies {
     }
     // 公开版不依赖别的插件提供 Kotlin 运行库,打进 jar
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
+    implementation("com.github.luben:zstd-jni:1.5.7-26")
     testImplementation(kotlin("test-junit5"))
     // NMS/Netty 由各自开发工具链提供；测试进程也需要完整开发类路径。
     testImplementation(files(configurations.compileClasspath))

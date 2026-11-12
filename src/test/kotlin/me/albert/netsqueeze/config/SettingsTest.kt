@@ -44,4 +44,16 @@ class SettingsTest {
         assertFailsWith<IllegalArgumentException> { Settings(maxFrameRawBytes = 1023) }
         assertFailsWith<IllegalArgumentException> { Settings(maxFrameRawBytes = 8 * 1024 * 1024 + 1) }
     }
+    @Test
+    fun `zstd configuration rejects invalid size level and nonboolean switch`() {
+        assertFailsWith<IllegalArgumentException> { Settings(zstdMinPacketBytes = 1023) }
+        assertFailsWith<IllegalArgumentException> { Settings(zstdMinPacketBytes = 8388609) }
+        assertFailsWith<IllegalArgumentException> { Settings(zstdLevel = 0) }
+        assertFailsWith<IllegalArgumentException> { Settings(zstdLevel = 6) }
+        val yaml = YamlConfiguration()
+        yaml.set("zstd-enabled", "yes")
+        assertFailsWith<IllegalArgumentException> { Settings.load(yaml) }
+        yaml.set("zstd-enabled", false)
+        assertFalse(Settings.load(yaml).zstdEnabled)
+    }
 }

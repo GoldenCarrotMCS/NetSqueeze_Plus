@@ -23,6 +23,8 @@ repositories { mavenCentral() }
 dependencies {
     minecraft("com.mojang:minecraft:$minecraftVersion")
     implementation("net.fabricmc:fabric-loader:$loaderVersion")
+    implementation("com.github.luben:zstd-jni:1.5.7-26")
+    include("com.github.luben:zstd-jni:1.5.7-26")
     // NMS/Netty 由各自开发工具链提供；测试进程也需要完整开发类路径。
     testImplementation(files(configurations.compileClasspath))
     testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")

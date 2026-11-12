@@ -16,6 +16,7 @@ import me.albert.netsqueeze.stats.WireCounter
 import me.albert.netsqueeze.stream.HelloHandler
 import me.albert.netsqueeze.stream.Protocol
 import me.albert.netsqueeze.stream.StreamCompressor
+import me.albert.netsqueeze.stream.ZstdFrame
 import net.kyori.adventure.key.Key
 import me.albert.netsqueeze.platform.NetworkNames as HandlerNames
 import org.bukkit.Bukkit
@@ -111,12 +112,16 @@ internal object Injector : Listener {
      * 握手成功,在这条连接的 netty 线程上调。先用原版格式发 enable,紧接着挂真压缩:同一个 netty 任务里做完,
      * 中间插不进别的出站字节,enable 之后的全是新格式。只在配置阶段切(进服后才来的不理,原版计数已经挂上了)
      */
-    fun enableStream(channel: Channel) {
+    fun enableStream(channel: Channel, useZstd: Boolean, markedFrames: Boolean) {
         val pipeline = channel.pipeline()
         if (useTunnel || stopped || !channel.isActive || pipeline.get(HandlerNames.PREPENDER) == null) return
         if (pipeline.get(STREAM) != null || pipeline.get(WIRE) != null) return
-        channel.writeAndFlush(Protocol.enablePacket())
-        pipeline.addAfter(anchorOf(pipeline), STREAM, StreamCompressor(settings.compressionLevel, settings.maxFrameRawBytes))
+        val negotiatedZstd = markedFrames && useZstd && settings.zstdEnabled && ZstdFrame.available()
+        channel.writeAndFlush(Protocol.enablePacket(negotiatedZstd, markedFrames))
+        pipeline.addAfter(anchorOf(pipeline), STREAM, StreamCompressor(
+            settings.compressionLevel, settings.maxFrameRawBytes, negotiatedZstd,
+            settings.zstdMinPacketBytes, settings.zstdLevel, markedFrames
+        ))
     }
 
     @EventHandler(priority = EventPriority.MONITOR)

@@ -13,11 +13,19 @@ import java.util.zip.DataFormatException;
 final class TunnelReassembler implements AutoCloseable {
     final UUID session;
     private final FrameInflater inflater = new FrameInflater();
+    final boolean markedFrames;
+    final boolean zstdEnabled;
     private ByteBuf pending;
     private long sequence;
     private boolean closed;
 
-    TunnelReassembler(UUID session) { this.session = session; }
+    TunnelReassembler(UUID session) { this(session, true, false); }
+
+    TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled) {
+        this.session = session;
+        this.markedFrames = markedFrames;
+        this.zstdEnabled = zstdEnabled;
+    }
 
     void accept(ByteBufAllocator alloc, byte[] data, Consumer<ByteBuf> output) throws DataFormatException {
         if (closed) throw new IllegalStateException("tunnel closed");
@@ -47,7 +55,7 @@ final class TunnelReassembler implements AutoCloseable {
         // 下游处理包可能同步关闭连接；先转移所有权，close() 就不会再次释放当前帧。
         ByteBuf complete = pending;
         pending = null;
-        try { inflater.decode(alloc, complete.readSlice(frameLength), output); }
+        try { inflater.decode(alloc, complete.readSlice(frameLength), markedFrames, zstdEnabled, output); }
         finally { complete.release(); }
     }
 

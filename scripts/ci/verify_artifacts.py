@@ -1,4 +1,5 @@
 """GitHub-only packaging checks. Never imports or executes classes from the jars."""
+import io
 import hashlib
 import json
 import re
@@ -22,6 +23,8 @@ def main():
         assert "me/albert/netsqueeze/NetSqueeze.class" in names
         assert "me/albert/netsqueeze/protocol/TunnelProtocol.class" in names
         assert "me/albert/netsqueeze/tunnel/TunnelCompressor.class" in names
+        assert "com/github/luben/zstd/Zstd.class" in names
+        assert any(n.endswith((".so", ".dll", ".dylib")) for n in names), "Missing ZSTD native libraries"
         assert "me/albert/netsqueeze/libs/kotlin/jvm/internal/Intrinsics.class" in names
         assert not any(name.startswith("kotlin/") for name in names), "Kotlin was not relocated"
         descriptor = jar.read("plugin.yml").decode("utf-8")
@@ -32,9 +35,16 @@ def main():
     with zipfile.ZipFile(client) as jar:
         assert "me/albert/netsqueeze/protocol/TunnelProtocol.class" in jar.namelist()
         assert "me/albert/netsqueeze/client/TunnelClientHandler.class" in jar.namelist()
+        assert "me/albert/netsqueeze/client/ZstdFrameDecoder.class" in jar.namelist()
         meta = json.loads(jar.read("fabric.mod.json"))
         assert meta["version"] == version
         assert meta["environment"] == "client"
+        nested_paths = [entry["file"] for entry in meta.get("jars", [])]
+        zstd_jars = [name for name in nested_paths if "zstd" in name.lower()]
+        assert len(zstd_jars) == 1, "Client must package exactly one ZSTD nested jar"
+        with zipfile.ZipFile(io.BytesIO(jar.read(zstd_jars[0]))) as nested:
+            assert "com/github/luben/zstd/Zstd.class" in nested.namelist()
+            assert any(n.endswith((".so", ".dll", ".dylib")) for n in nested.namelist()), "Missing client ZSTD natives"
         mixins = json.loads(jar.read("netsqueeze.mixins.json"))
         for name in mixins["client"]:
             assert mixins["package"].replace(".", "/") + "/" + name + ".class" in jar.namelist()

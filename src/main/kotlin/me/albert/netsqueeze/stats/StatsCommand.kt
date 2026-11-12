@@ -72,6 +72,9 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
         if (tunnel > 0 || TunnelStats.raw.sum() > 0) {
             sender.sendMessage("§b代理隧道：§7白名单原始 §f${size(TunnelStats.raw.sum())} §7→ 载荷 §f${size(TunnelStats.payload.sum())} §7(§f${percent(TunnelStats.payload.sum(), TunnelStats.raw.sum())}§7)，帧 §f${TunnelStats.frames.sum()}§7，错误 §f${TunnelStats.failures.sum()}")
             sender.sendMessage("§8隧道载荷不是 VC→玩家实际出网；外层大小受代理压缩配置影响。")
+            if (TunnelStats.zstdFrames.sum() > 0) {
+                sender.sendMessage("§7隧道 ZSTD 大包 §f${TunnelStats.zstdFrames.sum()}§7 帧，原始 §f${size(TunnelStats.zstdRaw.sum())}§7")
+            }
         }
         if (streaming == 0 && raw == 0L) return
         val streamWire = s.wire.sum()
@@ -80,11 +83,14 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
             "§b直连 mod：§7原始 §f${size(raw)} §7→ 出网 §f${size(streamWire)} §7(§f${mbps(streamWire, seconds)}§7，原始的 §f${percent(streamWire, raw)}§7)" +
                 "，包头约 §f${mbps(streamHeaders, seconds)}§7，人均 §f${kbps(streamWire + streamHeaders, seconds, streaming)}"
         )
-        val nanosPerSecond = s.deflateNanos.sum() / seconds
+        val nanosPerSecond = (s.deflateNanos.sum() + s.zstdNanos.sum()) / seconds
         sender.sendMessage(
             "§7真压缩 §f${count(s.frames.sum() / seconds)} §7帧/s，耗时 §f${"%.1f".format(Locale.ROOT, nanosPerSecond / 1e6)} ms/s" +
                 " §7(约 §f${"%.1f".format(Locale.ROOT, nanosPerSecond / 1e7)}%§7 个核心，摊在 netty 线程上)"
         )
+        if (s.zstdFrames.sum() > 0) {
+            sender.sendMessage("§7直连 ZSTD 大包 §f${s.zstdFrames.sum()}§7 帧，原始 §f${size(s.zstdRaw.sum())} §7→ 载荷 §f${size(s.zstdWire.sum())}")
+        }
         val failures = s.failures.sum()
         if (failures > 0) sender.sendMessage("§c真压缩出错 $failures 次，出错的连接已断开，第一条堆栈见后台")
     }

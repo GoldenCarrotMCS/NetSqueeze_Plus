@@ -25,11 +25,17 @@ public final class NetSqueezeClient {
 
     public static final Logger LOGGER = LoggerFactory.getLogger("NetSqueeze");
 
-    static final int VERSION = 1;
+    static final int VERSION = 3;
 
     static final Identifier HELLO = Identifier.fromNamespaceAndPath("netsqueeze", "hello_v" + VERSION);
 
-    static final Identifier ENABLE = Identifier.fromNamespaceAndPath("netsqueeze", "enable");
+    static final Identifier HELLO_ZSTD = Identifier.fromNamespaceAndPath("netsqueeze", "hello_v" + VERSION + "_zstd");
+
+    static final Identifier ENABLE_ZSTD = Identifier.fromNamespaceAndPath("netsqueeze", "enable_v" + VERSION + "_zstd");
+
+    static final Identifier LEGACY_ENABLE = Identifier.fromNamespaceAndPath("netsqueeze", "enable");
+    static final Identifier LEGACY_HELLO = Identifier.fromNamespaceAndPath("netsqueeze", "hello_v1");
+    static final Identifier ENABLE = Identifier.fromNamespaceAndPath("netsqueeze", "enable_v" + VERSION);
 
     private NetSqueezeClient() {
     }
@@ -68,6 +74,8 @@ public final class NetSqueezeClient {
     public static void sendHello(final Connection connection) {
         final Channel channel = ((ConnectionAccessor) connection).netsqueeze$getChannel();
         if (channel == null || channel.pipeline().get(StreamDecoder.NAME) == null) return;
-        connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(HELLO)));
+        connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(ZstdSupport.available() ? HELLO_ZSTD : HELLO)));
+        // Old servers ignore the first hello and negotiate their unchanged v1 format.
+        connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(LEGACY_HELLO)));
     }
 }

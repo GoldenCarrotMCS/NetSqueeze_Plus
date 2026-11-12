@@ -24,7 +24,9 @@ class ProtocolRoundTripTest {
     private static final byte[] ENABLE = {1, 0x42};
 
     /** 只替换 Minecraft 包解码，不替换生产 StreamDecoder/EnableDetector 或压缩格式。 */
-    private static EmbeddedChannel channel(boolean decompress) {
+    private static EmbeddedChannel channel(boolean decompress) { return channel(decompress, false, false); }
+
+    private static EmbeddedChannel channel(boolean decompress, boolean zstd, boolean legacy) {
         EmbeddedChannel ch = new EmbeddedChannel();
         ch.pipeline().addLast(StreamDecoder.NAME, new StreamDecoder());
         ch.pipeline().addLast(HandlerNames.SPLITTER, new ChannelInboundHandlerAdapter());
@@ -39,7 +41,7 @@ class ProtocolRoundTripTest {
                         assertEquals(1, bytes.readUnsignedByte());
                         assertEquals(0x42, bytes.readUnsignedByte());
                     } finally { bytes.release(); }
-                    ctx.fireChannelRead(new ClientboundCustomPayloadPacket(new DiscardedPayload(NetSqueezeClient.ENABLE)));
+                    ctx.fireChannelRead(new ClientboundCustomPayloadPacket(new DiscardedPayload(legacy ? NetSqueezeClient.LEGACY_ENABLE : zstd ? NetSqueezeClient.ENABLE_ZSTD : NetSqueezeClient.ENABLE)));
                 } else ctx.fireChannelRead(msg);
             }
         });
@@ -70,6 +72,50 @@ class ProtocolRoundTripTest {
                 assertNull(ch.readInbound());
             } finally { ch.finishAndReleaseAll(); }
         }
+    }
+
+    @Test
+    void zstdHandshakeAndMixedFramesDecodeThroughRealDetectorWithFragmentation() throws Exception {
+        List<byte[]> expected = new ArrayList<>();
+        Path dir = Path.of(System.getProperty("netsqueeze.fixtures"));
+        try (DataInputStream in = new DataInputStream(Files.newInputStream(dir.resolve("hybrid-expected.bin")))) {
+            int count = in.readInt();
+            for (int i = 0; i < count; i++) expected.add(in.readNBytes(in.readInt()));
+        }
+        EmbeddedChannel ch = channel(false, true, false);
+        try {
+            byte[] wire = concat(ENABLE, Files.readAllBytes(dir.resolve("hybrid-wire.bin")));
+            Random random = new Random(411);
+            for (int offset = 0; offset < wire.length;) {
+                int length = Math.min(wire.length - offset, 1 + random.nextInt(5000));
+                ch.writeInbound(Unpooled.wrappedBuffer(wire, offset, length));
+                offset += length;
+            }
+            for (byte[] packet : expected) assertArrayEquals(packet, readPacket(ch));
+            assertNull(ch.readInbound());
+        } finally { ch.finishAndReleaseAll(); }
+    }
+
+    @Test
+    void legacyEnableStillDecodesUnmarkedDeflate() {
+        byte[] packet = new byte[513];
+        new Random(33).nextBytes(packet);
+        byte[] marked = compressed(concat(varInt(packet.length), packet));
+        ByteBuf framed = Unpooled.wrappedBuffer(marked);
+        final byte[] legacyFrame;
+        try {
+            int length = StreamDecoder.readVarInt(framed);
+            assertEquals(0, framed.readUnsignedByte());
+            byte[] body = new byte[length - 1];
+            framed.readBytes(body);
+            legacyFrame = concat(varInt(body.length), body);
+        } finally { framed.release(); }
+        EmbeddedChannel ch = channel(false, false, true);
+        try {
+            ch.writeInbound(Unpooled.wrappedBuffer(concat(ENABLE, legacyFrame)));
+            assertArrayEquals(packet, readPacket(ch));
+            assertNull(ch.readInbound());
+        } finally { ch.finishAndReleaseAll(); }
     }
 
     @Test
@@ -208,7 +254,7 @@ class ProtocolRoundTripTest {
                 out.write(chunk, 0, produced);
                 if (produced < chunk.length && deflater.needsInput()) break;
             }
-            byte[] body = out.toByteArray();
+            byte[] body = concat(new byte[]{0}, out.toByteArray());
             return concat(varInt(body.length), body);
         } finally { deflater.end(); }
     }

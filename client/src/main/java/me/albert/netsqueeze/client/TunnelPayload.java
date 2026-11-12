@@ -13,11 +13,17 @@ public record TunnelPayload(Identifier id, byte[] data) implements CustomPacketP
     public static final Identifier DATA = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.DATA_PATH);
     public static final Identifier STOP = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.STOP_PATH);
 
+    public static final Identifier LEGACY_OFFER = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.offerPath(false));
+    public static final Identifier LEGACY_DATA = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.dataPath(false));
+    public static final Identifier LEGACY_STOP = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.stopPath(false));
+
     @Override public Type<TunnelPayload> type() { return new Type<>(id); }
 
     public static <B extends FriendlyByteBuf> CustomPacketPayload.FallbackProvider<B> fallback(
             CustomPacketPayload.FallbackProvider<B> original) {
-        return id -> id.equals(OFFER) || id.equals(DATA) || id.equals(STOP) ? codec(id) : original.create(id);
+        return id -> id.equals(OFFER) || id.equals(DATA) || id.equals(STOP) ||
+            id.equals(LEGACY_OFFER) || id.equals(LEGACY_DATA) || id.equals(LEGACY_STOP)
+            ? codec(id) : original.create(id);
     }
 
     public static <B extends FriendlyByteBuf> StreamCodec<B, TunnelPayload> codec(Identifier id) {

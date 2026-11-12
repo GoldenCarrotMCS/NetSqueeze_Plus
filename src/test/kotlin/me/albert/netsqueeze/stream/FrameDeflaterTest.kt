@@ -40,6 +40,7 @@ class FrameDeflaterTest {
             try {
                 val bodyLength = readVarInt(frame)
                 assertEquals(bodyLength, frame.readableBytes())
+                assertEquals(0, frame.readUnsignedByte().toInt())
                 val compressed = ByteArray(frame.readableBytes())
                 frame.readBytes(compressed)
                 assertContentEquals(expected.toByteArray(), inflate(compressed))

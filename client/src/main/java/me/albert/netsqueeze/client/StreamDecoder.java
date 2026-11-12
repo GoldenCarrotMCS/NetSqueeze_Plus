@@ -38,10 +38,16 @@ final class StreamDecoder extends ChannelInboundHandlerAdapter {
     private boolean enablePending;
     private boolean giveUpPending;
     private boolean removed;
+    private boolean markedFrames;
+    private boolean zstdEnabled;
 
     /** EnableDetector 在本线程同步调,等交出去的那一帧返回后才生效 */
-    void enable() {
+    void enable(boolean zstdEnabled) { enable(true, zstdEnabled); }
+
+    void enable(boolean markedFrames, boolean zstdEnabled) {
         this.enablePending = true;
+        this.markedFrames = markedFrames;
+        this.zstdEnabled = zstdEnabled;
     }
 
     void giveUp() {
@@ -124,7 +130,8 @@ final class StreamDecoder extends ChannelInboundHandlerAdapter {
     }
 
     private void inflate(final ChannelHandlerContext ctx, final ByteBuf frame) throws DataFormatException {
-        this.inflater.decode(ctx.alloc(), frame, packet -> packetTarget(ctx).fireChannelRead(packet));
+        this.inflater.decode(ctx.alloc(), frame, this.markedFrames, this.zstdEnabled,
+                packet -> packetTarget(ctx).fireChannelRead(packet));
     }
 
     /** 包要直接进 decoder:从 decompress 的 context 往下发就跳过了它和 splitter;没开压缩时没有 decompress */

@@ -61,3 +61,12 @@
 - server-compat：Paper 26.1.1/26.1.2/26.2/26.3、Folia 26.2/26.3，默认 Build 覆盖 Folia 26.1.2；发布依赖全部成功。PublishedAdapterTest 用同一个主构建 Jar 在目标开发运行库中链接，不能替换为只重新编译源码。
 - 客户端已有 26.1～26.3 CI 矩阵，Loader 声明允许后续 26.x，但未知 Mixin 仍可能需更新；不保证未来版本启动。服务端 26.1 无独立开发包，未单独证明。
 - 本地不构建/不执行测试；用户自行负责游戏、服务器和 VC 验收。不主动启动任何接受测试，也不代用户接受 EULA。
+
+## 1.4.0 大包 ZSTD
+
+- 默认配置 zstd-enabled=true、zstd-min-packet-bytes=65536、zstd-level=1。小包保持现有算法，VC 极小包仍原版。
+- 直连 v3 和隧道 v3 明确协商标记帧：0=连续 Deflate，1=独立 ZSTD；旧直连 v1/隧道 v2 始终没有算法标记。
+- 新客户端发送现代 hello 再发送旧 hello，旧服务端仅响应旧格式。后端先发 v3 再发 v2 offer，客户端首个有效会话固定格式，同格式重试可重发 ACK，回退邀请不能改变活动字典。
+- 大包前先 emit 而不 flush。ZSTD 压独立副本，失败或不比 raw 包帧小时尚未推进字典，可回退 Deflate。不能把已喂入 Deflate 的数据丢掉改算法。
+- ZstdFrame / ZstdFrameDecoder 校验内容大小、完整单帧和窗口23；所有 ctx 必须 close。shared 不引入算法库。JNI 包不能 relocate，服务端 shade 保留完整原生资源；客户端 implementation + Loom include 嵌套完整库。
+- ZSTD-JNI 固定 1.5.7-26，不允许 + 或 latest。CI 必须实际验证 native，不能 assume 跳过；仍不本地构建/运行游戏或服务器。跨平台真实验收由用户负责。

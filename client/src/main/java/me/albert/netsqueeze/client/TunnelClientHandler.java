@@ -35,11 +35,20 @@ final class TunnelClientHandler extends ChannelInboundHandlerAdapter {
             return;
         }
         try {
-            if (payload.id().equals(TunnelPayload.OFFER)) {
+            if (payload.id().equals(TunnelPayload.OFFER) || payload.id().equals(TunnelPayload.LEGACY_OFFER)) {
                 String version = FabricLoader.getInstance().getModContainer("minecraft").orElseThrow()
                     .getMetadata().getVersion().getFriendlyString();
                 if (!MinecraftVersions.eligible(version)) return;
                 TunnelProtocol.Offer offer = TunnelProtocol.decodeOffer(payload.data());
+                boolean marked = payload.id().equals(TunnelPayload.OFFER);
+                if (offer.markedFrames() != marked) throw new CorruptedFrameException("Tunnel offer channel/format mismatch");
+                if (receiver != null && receiver.session.equals(offer.session())) {
+                    if (receiver.markedFrames != marked) return; // do not downgrade on the fallback offer
+                    Identifier retry = Identifier.fromNamespaceAndPath("netsqueeze",
+                        TunnelProtocol.ackPath(receiver.session, offer.protocol(), marked, receiver.zstdEnabled));
+                    ctx.channel().writeAndFlush(new ServerboundCustomPayloadPacket(new DiscardedPayload(retry)));
+                    return;
+                }
                 int localProtocol = SharedConstants.getProtocolVersion();
                 if (!MinecraftVersions.protocolMatches(offer.protocol(), localProtocol)) {
                     NetSqueezeClient.LOGGER.info("代理隧道保持原版：后端协议 {} 与客户端协议 {} 不同，不能绕过版本转换", offer.protocol(), localProtocol);
@@ -51,16 +60,24 @@ final class TunnelClientHandler extends ChannelInboundHandlerAdapter {
                 }
                 if (protocol(ctx).id() != ConnectionProtocol.PLAY) return;
                 UUID session = offer.session();
+                boolean useZstd = offer.zstd() && ZstdSupport.available();
                 if (receiver == null || !receiver.session.equals(session)) {
                     reset();
-                    receiver = new TunnelReassembler(session);
+                    receiver = new TunnelReassembler(session, marked, useZstd);
                 }
-                Identifier ack = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.ackPath(session, localProtocol));
+                Identifier ack = Identifier.fromNamespaceAndPath("netsqueeze",
+                    TunnelProtocol.ackPath(session, localProtocol, marked, useZstd));
                 ctx.channel().writeAndFlush(new ServerboundCustomPayloadPacket(new DiscardedPayload(ack)));
-                NetSqueezeClient.LOGGER.info("GoldenCarrot服务器兼容模式：已协商 Velocity 压缩隧道（无需代理插件）");
-            } else if (payload.id().equals(TunnelPayload.STOP)) {
-                if (receiver != null && receiver.session.equals(session(payload.data()))) reset();
+                NetSqueezeClient.LOGGER.info(useZstd
+                    ? "GoldenCarrot服务器兼容模式：大包 ZSTD / 小包 Deflate 隧道已协商"
+                    : "GoldenCarrot服务器兼容模式：Deflate 隧道已协商（ZSTD 未协商或不可用）");
+            } else if (payload.id().equals(TunnelPayload.STOP) || payload.id().equals(TunnelPayload.LEGACY_STOP)) {
+                if (receiver != null && receiver.markedFrames == payload.id().equals(TunnelPayload.STOP) &&
+                        receiver.session.equals(session(payload.data()))) reset();
             } else if (receiver != null) {
+                if (receiver.markedFrames != payload.id().equals(TunnelPayload.DATA)) {
+                    throw new CorruptedFrameException("Tunnel data channel differs from negotiated format");
+                }
                 receiver.accept(ctx.alloc(), payload.data(), bytes -> decodeInner(ctx, bytes));
             }
         } catch (Exception e) {

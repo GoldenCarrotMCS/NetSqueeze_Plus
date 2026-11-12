@@ -73,3 +73,11 @@ GoldenCarrot服务器的代理方案和验收清单见 [docs/VELOCITY.md](docs/V
 - 运行时只接受 26+ 正式版字符串，实际 API 形状必须通过检查才注册网络处理器。26.1 无独立 Paper 开发包未单独证明；未来版本属于能力探测/待验证，不承诺永远兼容。
 - 客户端 CI 仍覆盖已发布 26.1～26.3，Fabric 声明放宽到后续 26.x；未知 Mixin 签名仍可能需要适配，不能保证未来客户端启动。
 - 不主动运行服务器/游戏验收；用户负责实际 Canvas/Paper/Folia、VC、ViaVersion 和 Fabric 安装验证。没有自动接受 EULA。
+
+## 1.4.0 大包 ZSTD 验证
+
+- `HybridFramesTest` 用真实直连/隧道处理器产生 Deflate 小包 → ZSTD 大包 → Deflate 小包夹具，包括阈值边界、高熵回退、3 MiB 原包、多分片、禁用开关和旧客户端协商。
+- 客户端 `FrameInflater`、`StreamDecoder`、`EnableDetector`、`TunnelReassembler` 消费本次构建的真实字节，核对原始包序列。CI 必须真正加载 ZSTD native，不允许 assume 跳过冒充成功。
+- 产物验证核对服务端完整 native、客户端嵌套 ZSTD Jar/native；两端共享协议代码不能 import ZSTD 或 Fabric。
+- 默认 64 KiB 大包阈值、level 1，关闭 `zstd-enabled` 或 native 探测失败时仍保留 Deflate。原版和旧客户端不收到未协商的 ZSTD 格式。
+- 没有本地构建或测试。真实服务器、游戏、VC 和其他操作系统/架构 native 加载验收交给用户。

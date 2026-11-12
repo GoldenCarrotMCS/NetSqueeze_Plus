@@ -131,17 +131,17 @@ class TunnelCompressorTest {
         val ch = EmbeddedChannel(bridge, TunnelHandshake(bridge))
         try {
             val wrong = net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket(
-                DiscardedPayload(TunnelProtocol.ack(java.util.UUID.randomUUID(), bridge.protocol) as net.minecraft.resources.Identifier, ByteArray(0)))
+                DiscardedPayload(TunnelProtocol.ack(java.util.UUID.randomUUID(), bridge.protocol, marked = true) as net.minecraft.resources.Identifier, ByteArray(0)))
             ch.writeInbound(wrong)
             assertFalse(bridge.enabled)
             assertSame(wrong, ch.readInbound<Any>())
             val wrongVersion = net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket(
-                DiscardedPayload(TunnelProtocol.ack(bridge.session, bridge.protocol + 1) as net.minecraft.resources.Identifier, ByteArray(0)))
+                DiscardedPayload(TunnelProtocol.ack(bridge.session, bridge.protocol + 1, marked = true) as net.minecraft.resources.Identifier, ByteArray(0)))
             ch.writeInbound(wrongVersion)
             assertFalse(bridge.enabled)
             assertSame(wrongVersion, ch.readInbound<Any>())
             ch.writeInbound(net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket(
-                DiscardedPayload(TunnelProtocol.ack(bridge.session, bridge.protocol) as net.minecraft.resources.Identifier, ByteArray(0))))
+                DiscardedPayload(TunnelProtocol.ack(bridge.session, bridge.protocol, marked = true) as net.minecraft.resources.Identifier, ByteArray(0))))
             assertTrue(bridge.enabled)
             assertNull(ch.readInbound<Any>())
         } finally { ch.finishAndReleaseAll() }

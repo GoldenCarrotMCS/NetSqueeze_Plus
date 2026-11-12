@@ -9,7 +9,9 @@ internal object TunnelStats {
     val raw = LongAdder()
     val payload = LongAdder()
     val frames = LongAdder()
+    val zstdRaw = LongAdder()
+    val zstdFrames = LongAdder()
     val failures = LongAdder()
 
-    fun reset() = listOf(raw, payload, frames, failures).forEach { it.reset() }
+    fun reset() = listOf(raw, payload, frames, zstdRaw, zstdFrames, failures).forEach { it.reset() }
 }

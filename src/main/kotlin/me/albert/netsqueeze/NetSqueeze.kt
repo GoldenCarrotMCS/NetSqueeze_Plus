@@ -52,6 +52,13 @@ class NetSqueeze : JavaPlugin() {
             server.pluginManager.disablePlugin(this)
             return
         }
+        if (settings.zstdEnabled) {
+            if (me.albert.netsqueeze.stream.ZstdFrame.available()) {
+                logger.info("大包 ZSTD 就绪：阈值 ${settings.zstdMinPacketBytes} B，级别 ${settings.zstdLevel}；仅协商成功后启用。")
+            } else {
+                logger.warning("ZSTD 原生库不可用或被系统属性禁用，保留 Deflate；不会声明 ZSTD 能力。")
+            }
+        }
         val useTunnel = try {
             settings.transportMode.useTunnel(ServerNetwork.proxyConfigured())
         } catch (e: IllegalArgumentException) {

@@ -38,7 +38,7 @@ class TunnelReceiverTest {
             ByteBuffer header = ByteBuffer.wrap(carriers.getFirst());
             UUID session = new UUID(header.getLong(), header.getLong());
             List<byte[]> actual = new ArrayList<>();
-            try (TunnelReassembler receiver = new TunnelReassembler(session)) {
+            try (TunnelReassembler receiver = new TunnelReassembler(session, true, true)) {
                 for (byte[] carrier : carriers) {
                     assertTrue(carrier.length <= TunnelProtocol.HEADER_BYTES + TunnelProtocol.FRAGMENT_BYTES);
                     // 模拟代理只转发原版 CustomPayload 的数据；实际 VC/Fabric 启动仍须另测。
@@ -62,7 +62,7 @@ class TunnelReceiverTest {
         ByteBuffer header = ByteBuffer.wrap(carriers.getFirst());
         UUID session = new UUID(header.getLong(), header.getLong());
         boolean[] delivered = {false};
-        try (TunnelReassembler receiver = new TunnelReassembler(session)) {
+        try (TunnelReassembler receiver = new TunnelReassembler(session, true, true)) {
             for (byte[] carrier : carriers) {
                 receiver.accept(UnpooledByteBufAllocator.DEFAULT, carrier, packet -> {
                     packet.release();
@@ -78,7 +78,7 @@ class TunnelReceiverTest {
     @Test
     void staleSessionIsIgnoredAndMissingSequenceIsRejected() throws Exception {
         UUID session = UUID.randomUUID();
-        try (TunnelReassembler receiver = new TunnelReassembler(session)) {
+        try (TunnelReassembler receiver = new TunnelReassembler(session, true, true)) {
             receiver.accept(UnpooledByteBufAllocator.DEFAULT, fragment(UUID.randomUUID(), 99, new byte[]{1}), packet -> fail());
             assertThrows(CorruptedFrameException.class, () ->
                 receiver.accept(UnpooledByteBufAllocator.DEFAULT, fragment(session, 1, new byte[]{1}), packet -> fail()));
@@ -88,11 +88,11 @@ class TunnelReceiverTest {
     @Test
     void rejectsHugeDeclarationBeforeFrameBodyAndRejectsDuplicateFragment() throws Exception {
         UUID session = UUID.randomUUID();
-        try (TunnelReassembler receiver = new TunnelReassembler(session)) {
+        try (TunnelReassembler receiver = new TunnelReassembler(session, true, true)) {
             assertThrows(CorruptedFrameException.class, () -> receiver.accept(UnpooledByteBufAllocator.DEFAULT,
                 fragment(session, 0, new byte[]{-1, -1, -1, 127}), packet -> fail()));
         }
-        try (TunnelReassembler receiver = new TunnelReassembler(session)) {
+        try (TunnelReassembler receiver = new TunnelReassembler(session, true, true)) {
             byte[] incomplete = fragment(session, 0, new byte[]{100, 1});
             receiver.accept(UnpooledByteBufAllocator.DEFAULT, incomplete, packet -> fail());
             assertThrows(CorruptedFrameException.class, () ->
