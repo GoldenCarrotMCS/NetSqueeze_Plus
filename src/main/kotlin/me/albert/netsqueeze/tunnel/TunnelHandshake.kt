@@ -7,6 +7,9 @@ import me.albert.netsqueeze.platform.ServerNetwork
 internal class TunnelHandshake(private val bridge: TunnelCompressor) : ChannelInboundHandlerAdapter() {
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         val packetId = ServerNetwork.packetAccess().payloadId(msg)
+        if (packetId == bridge.cacheAck(true)) { bridge.acknowledge(useZstd = true, cache = true); return }
+        if (packetId == bridge.cacheAck(false)) { bridge.acknowledge(useZstd = false, cache = true); return }
+        if (bridge.cacheSeed(packetId)) return
         if (packetId == bridge.ack(true)) {
             bridge.acknowledge(useZstd = true)
             return

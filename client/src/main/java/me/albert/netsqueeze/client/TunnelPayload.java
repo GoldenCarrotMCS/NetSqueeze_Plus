@@ -2,6 +2,7 @@ package me.albert.netsqueeze.client;
 
 import io.netty.handler.codec.CorruptedFrameException;
 import me.albert.netsqueeze.protocol.TunnelProtocol;
+import me.albert.netsqueeze.protocol.ChunkCacheProtocol;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -17,12 +18,17 @@ public record TunnelPayload(Identifier id, byte[] data) implements CustomPacketP
     public static final Identifier LEGACY_DATA = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.dataPath(false));
     public static final Identifier LEGACY_STOP = Identifier.fromNamespaceAndPath("netsqueeze", TunnelProtocol.stopPath(false));
 
+    public static final Identifier CACHE_OFFER = Identifier.fromNamespaceAndPath("netsqueeze", ChunkCacheProtocol.OFFER);
+    public static final Identifier CACHE_DATA = Identifier.fromNamespaceAndPath("netsqueeze", ChunkCacheProtocol.DATA);
+    public static final Identifier CACHE_STOP = Identifier.fromNamespaceAndPath("netsqueeze", ChunkCacheProtocol.STOP);
+
     @Override public Type<TunnelPayload> type() { return new Type<>(id); }
 
     public static <B extends FriendlyByteBuf> CustomPacketPayload.FallbackProvider<B> fallback(
             CustomPacketPayload.FallbackProvider<B> original) {
         return id -> id.equals(OFFER) || id.equals(DATA) || id.equals(STOP) ||
-            id.equals(LEGACY_OFFER) || id.equals(LEGACY_DATA) || id.equals(LEGACY_STOP)
+            id.equals(LEGACY_OFFER) || id.equals(LEGACY_DATA) || id.equals(LEGACY_STOP) ||
+            id.equals(CACHE_OFFER) || id.equals(CACHE_DATA) || id.equals(CACHE_STOP)
             ? codec(id) : original.create(id);
     }
 

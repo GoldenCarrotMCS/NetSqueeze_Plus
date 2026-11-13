@@ -17,6 +17,9 @@ final class FrameInflater implements AutoCloseable {
     private static final int ZSTD_MARKER = 1;
     private final Inflater inflater = new Inflater(true);
     private boolean closed;
+    private final int extraBytes;
+    FrameInflater() { this(false); }
+    FrameInflater(boolean cache) { extraBytes = cache ? 1 : 0; }
 
     void decode(ByteBufAllocator alloc, ByteBuf frame, boolean markedFrames, boolean allowZstd,
                 Consumer<ByteBuf> output) throws DataFormatException {
@@ -94,7 +97,7 @@ final class FrameInflater implements AutoCloseable {
             if (length <= 0 || length > out.readableBytes()) {
                 throw new CorruptedFrameException("NetSqueeze 帧里有半个包");
             }
-            if (length > CompressionDecoder.MAXIMUM_UNCOMPRESSED_LENGTH) {
+            if (length > CompressionDecoder.MAXIMUM_UNCOMPRESSED_LENGTH + extraBytes) {
                 throw new CorruptedFrameException("NetSqueeze 包过大");
             }
             output.accept(out.readRetainedSlice(length));

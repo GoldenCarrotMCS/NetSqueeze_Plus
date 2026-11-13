@@ -40,6 +40,10 @@ class NetSqueeze : JavaPlugin() {
         }
         logger.info("Minecraft $serverVersion，协议号 ${ServerNetwork.protocolVersion()}，网络 API 检查通过")
         saveDefaultConfig()
+        if (!config.contains("chunk-cache-namespace") || config.getString("chunk-cache-namespace") == "00000000-0000-0000-0000-000000000000") {
+            config.set("chunk-cache-namespace", java.util.UUID.randomUUID().toString())
+            saveConfig()
+        }
         val settings = try {
             Settings.load(config)
         } catch (e: IllegalArgumentException) {
@@ -60,7 +64,7 @@ class NetSqueeze : JavaPlugin() {
             }
         }
         val useTunnel = try {
-            settings.transportMode.useTunnel(ServerNetwork.proxyConfigured())
+            settings.transportMode.useTunnel(ServerNetwork.proxyConfigured()) || settings.chunkCacheEnabled
         } catch (e: IllegalArgumentException) {
             logger.severe("传输模式错误：${e.message}")
             server.pluginManager.disablePlugin(this)
@@ -78,5 +82,6 @@ class NetSqueeze : JavaPlugin() {
     override fun onDisable() {
         if (!initialized) return
         Injector.shutdown()
+        me.albert.netsqueeze.tunnel.TunnelCompressor.stopWorkers()
     }
 }

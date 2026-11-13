@@ -12,7 +12,8 @@ import java.util.zip.DataFormatException;
 /** 每个后端会话独立字典；仅接收连续序号，旧后端会话的延迟载荷不会污染新字典。 */
 final class TunnelReassembler implements AutoCloseable {
     final UUID session;
-    private final FrameInflater inflater = new FrameInflater();
+    private final FrameInflater inflater;
+    final boolean cache;
     final boolean markedFrames;
     final boolean zstdEnabled;
     private ByteBuf pending;
@@ -21,7 +22,11 @@ final class TunnelReassembler implements AutoCloseable {
 
     TunnelReassembler(UUID session) { this(session, true, false); }
 
-    TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled) {
+    TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled) { this(session, markedFrames, zstdEnabled, false); }
+
+    TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled, boolean cache) {
+        this.inflater = new FrameInflater(cache);
+        this.cache = cache;
         this.session = session;
         this.markedFrames = markedFrames;
         this.zstdEnabled = zstdEnabled;

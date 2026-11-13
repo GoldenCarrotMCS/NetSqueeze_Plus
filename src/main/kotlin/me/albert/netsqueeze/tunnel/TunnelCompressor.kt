@@ -6,6 +6,8 @@ import io.netty.channel.ChannelOutboundHandlerAdapter
 import io.netty.channel.ChannelPromise
 import io.netty.util.ReferenceCountUtil
 import io.netty.util.concurrent.PromiseCombiner
+import me.albert.netsqueeze.protocol.ChunkCacheProtocol
+import me.albert.netsqueeze.protocol.SnapshotCodec
 import me.albert.netsqueeze.config.Settings
 import me.albert.netsqueeze.protocol.TunnelProtocol as Wire
 import me.albert.netsqueeze.stats.PlayerTally
@@ -42,6 +44,41 @@ internal class TunnelCompressor(
     private var markedFrames = true
     private var zstdEnabled = false
     var candidate = false
+    var chunkCandidate = false
+    private var snapshots: SnapshotCodec? = null
+    private var cacheMode = false
+    var snapshotBusy = false
+        private set
+    var internalEmission = false
+        private set
+    var gate: TunnelGate? = null
+    private var asynchronousPromise: ChannelPromise? = null
+    private var busyTimeout: java.util.concurrent.ScheduledFuture<*>? = null
+    companion object {
+        private val snapshotMemory = java.util.concurrent.atomic.AtomicLong()
+        private val workers = java.util.concurrent.ThreadPoolExecutor(2, 2, 30, java.util.concurrent.TimeUnit.SECONDS,
+            java.util.concurrent.ArrayBlockingQueue<Runnable>(32),
+            java.util.concurrent.ThreadFactory { task -> Thread(task, "NetSqueeze-snapshot").apply { isDaemon = true } },
+            java.util.concurrent.ThreadPoolExecutor.AbortPolicy()).apply { allowCoreThreadTimeOut(true) }
+        fun stopWorkers() { workers.shutdownNow() }
+    }
+
+    private fun writeCarrier(packet: Any): io.netty.channel.ChannelFuture {
+        val previous = internalEmission
+        internalEmission = true
+        return try { context.channel().write(packet) } finally { internalEmission = previous }
+    }
+
+    fun cacheAck(zstd: Boolean): Any = me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.ack(session, protocol, zstd))
+
+    fun cacheSeed(packetId: Any?): Boolean {
+        val path = packetId?.toString() ?: return false
+        val prefix = "netsqueeze:" + ChunkCacheProtocol.SEED + session + "/"
+        if (!path.startsWith(prefix)) return false
+        val hash = path.removePrefix(prefix)
+        if (cacheMode && ChunkCacheProtocol.validHash(hash)) snapshots?.advertise(hash)
+        return true
+    }
 
     override fun handlerAdded(ctx: ChannelHandlerContext) { context = ctx }
 
@@ -49,6 +86,10 @@ internal class TunnelCompressor(
 
     fun offer() {
         if (!closed && playing && !enabled) {
+            if (settings.chunkCacheEnabled) {
+                val offer = ChunkCacheProtocol.Offer(session, protocol, zstdAvailable, UUID.fromString(settings.chunkCacheNamespace), settings.chunkCacheEpoch)
+                context.channel().write(TunnelProtocol.packet(me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.OFFER), ChunkCacheProtocol.offer(offer)))
+            }
             context.channel().write(TunnelProtocol.offer(session, protocol, marked = true, zstd = zstdAvailable))
             context.channel().writeAndFlush(TunnelProtocol.offer(session, protocol, marked = false, zstd = false))
         }
@@ -65,8 +106,10 @@ internal class TunnelCompressor(
         if (!closed && !playing) { playing = true; offer() }
     }
 
-    fun acknowledge(useZstd: Boolean = false, marked: Boolean = true) {
+    fun acknowledge(useZstd: Boolean = false, marked: Boolean = true, cache: Boolean = false) {
         if (closed || enabled || !playing || !context.channel().isActive) return
+        cacheMode = cache && marked && settings.chunkCacheEnabled
+        if (cacheMode) snapshots = SnapshotCodec(snapshotMemory, 64L * 1024 * 1024)
         markedFrames = marked
         zstdEnabled = marked && useZstd && zstdAvailable
         deflater = FrameDeflater(context.alloc(), settings.compressionLevel, markedFrames)
@@ -87,30 +130,81 @@ internal class TunnelCompressor(
             ctx.write(msg, promise)
             return
         }
+        if (cacheMode && chunkCandidate && msg.readableBytes() in 128..ChunkCacheProtocol.MAX_PACKET) {
+            val raw = ByteArray(msg.readableBytes())
+            msg.getBytes(msg.readerIndex(), raw)
+            val codec = checkNotNull(snapshots)
+            snapshotBusy = true
+            asynchronousPromise = promise
+            val currentSession = session
+            busyTimeout = ctx.executor().schedule({ if (snapshotBusy) fail(java.util.concurrent.TimeoutException("Snapshot worker timed out")) }, 2, java.util.concurrent.TimeUnit.SECONDS)
+            try {
+                workers.execute {
+                    val before = longArrayOf(codec.full, codec.hits, codec.patches)
+                    val result = runCatching { codec.encode(raw, true) }
+                    try { ctx.executor().execute {
+                        if (closed || failed || session != currentSession) {
+                            promise.tryFailure(ClosedChannelException())
+                        } else {
+                            result.onSuccess { envelope ->
+                                me.albert.netsqueeze.stats.ChunkCacheStats.full.add(codec.full - before[0])
+                                me.albert.netsqueeze.stats.ChunkCacheStats.hits.add(codec.hits - before[1])
+                                me.albert.netsqueeze.stats.ChunkCacheStats.patches.add(codec.patches - before[2])
+                                compress(ctx, io.netty.buffer.Unpooled.wrappedBuffer(envelope), promise)
+                            }.onFailure { promise.tryFailure(it); fail(it) }
+                        }
+                        busyTimeout?.cancel(false); busyTimeout = null
+                        asynchronousPromise = null; snapshotBusy = false
+                        if (!closed && !failed) gate?.drain()
+                    } } catch (e: java.util.concurrent.RejectedExecutionException) { promise.tryFailure(e) }
+                }
+                msg.release()
+                return
+            } catch (_: java.util.concurrent.RejectedExecutionException) {
+                busyTimeout?.cancel(false); busyTimeout = null
+                asynchronousPromise = null; snapshotBusy = false
+                // No dictionary or snapshot mutation occurred: safely send full ordinary data.
+            }
+        }
+        compress(ctx, msg, promise, wrap = cacheMode)
+    }
+
+    private fun compress(ctx: ChannelHandlerContext, msg: ByteBuf, promise: ChannelPromise, wrap: Boolean = false) {
+        var input = msg
         try {
-            if (msg.readableBytes() < settings.tunnelMinPacketBytes) {
+            if (wrap) {
+                val raw = ByteArray(msg.readableBytes())
+                msg.getBytes(msg.readerIndex(), raw)
+                val codec = checkNotNull(snapshots)
+                val oldFull = codec.full; val oldHits = codec.hits; val oldPatches = codec.patches
+                input = io.netty.buffer.Unpooled.wrappedBuffer(codec.encode(raw, false))
+                me.albert.netsqueeze.stats.ChunkCacheStats.full.add(codec.full - oldFull)
+                me.albert.netsqueeze.stats.ChunkCacheStats.hits.add(codec.hits - oldHits)
+                me.albert.netsqueeze.stats.ChunkCacheStats.patches.add(codec.patches - oldPatches)
+            }
+            if (!cacheMode && input.readableBytes() < settings.tunnelMinPacketBytes) {
                 emit()
                 // 没喂给 Deflater，字典没有推进，可安全保留原版小包，避免固定隧道头放大流量。
-                ctx.write(msg.retain(), promise)
+                ctx.write(input.retain(), promise)
                 return
             }
             val compressor = checkNotNull(deflater)
-            val size = msg.readableBytes().toLong() + VarInt.getByteSize(msg.readableBytes())
-            require(msg.isReadable && msg.readableBytes() <= ZstdFrame.MAX_INPUT)
-            if (zstdEnabled && msg.readableBytes() >= settings.zstdMinPacketBytes) {
+            val size = input.readableBytes().toLong() + VarInt.getByteSize(input.readableBytes())
+            require(input.isReadable && input.readableBytes() <= ZstdFrame.MAX_INPUT + 1)
+            if (zstdEnabled && input.readableBytes() <= ZstdFrame.MAX_INPUT && input.readableBytes() >= settings.zstdMinPacketBytes) {
                 if (compressor.pendingPackets > 0) emit()
-                if (emitZstd(msg, promise)) return
+                if (emitZstd(input, promise)) return
             }
             val limit = minOf(settings.maxFrameRawBytes, 512 * 1024)
             if (compressor.pendingPackets > 0 &&
                 (compressor.pendingRaw + size > limit || compressor.pendingPackets >= 4096)) emit()
-            compressor.feed(msg)
+            compressor.feed(input)
             if (!promise.isVoid) pending += promise
             if (compressor.pendingRaw >= limit) emit()
         } catch (e: Throwable) {
             if (!promise.isVoid) promise.tryFailure(e)
             fail(e)
-        } finally { msg.release() }
+        } finally { if (input !== msg) input.release(); msg.release() }
     }
 
     fun emit() {
@@ -149,7 +243,7 @@ internal class TunnelCompressor(
                     .putLong(session.mostSignificantBits).putLong(session.leastSignificantBits).putLong(sequence)
                 sequence = Math.incrementExact(sequence)
                 frame.readBytes(payload.array(), Wire.HEADER_BYTES, length)
-                combined.add(context.channel().write(TunnelProtocol.packet(TunnelProtocol.data(markedFrames), payload.array())))
+                combined.add(writeCarrier(TunnelProtocol.packet(if (cacheMode) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.DATA) else TunnelProtocol.data(markedFrames), payload.array())))
                 TunnelStats.payload.add(payload.array().size.toLong())
             }
             combined.finish(completion)
@@ -173,11 +267,12 @@ internal class TunnelCompressor(
 
     /** 重配置与卸载先收尾再发 STOP，客户端不需要断线也能恢复纯原版。 */
     fun pause() {
+        if (snapshotBusy) { fail(ClosedChannelException()); return }
         if (enabled) {
             emit()
             if (closed || !enabled) return
             val stop = ByteBuffer.allocate(16).putLong(session.mostSignificantBits).putLong(session.leastSignificantBits)
-            context.channel().write(TunnelProtocol.packet(TunnelProtocol.stop(markedFrames), stop.array()))
+            writeCarrier(TunnelProtocol.packet(if (cacheMode) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.STOP) else TunnelProtocol.stop(markedFrames), stop.array()))
             enabled = false
             tally.tunnel = false
             TunnelStats.active.decrementAndGet()
@@ -185,6 +280,7 @@ internal class TunnelCompressor(
             deflater = null
             onStateChange(false)
         }
+        snapshots?.close(); snapshots = null; cacheMode = false
         playing = false
         session = UUID.randomUUID()
         sequence = 0
@@ -194,6 +290,10 @@ internal class TunnelCompressor(
     override fun handlerRemoved(ctx: ChannelHandlerContext) {
         if (closed) return
         closed = true
+        busyTimeout?.cancel(false); busyTimeout = null
+        asynchronousPromise?.tryFailure(ClosedChannelException()); asynchronousPromise = null
+        gate?.abort()
+        snapshots?.close(); snapshots = null
         if (enabled) TunnelStats.active.decrementAndGet()
         enabled = false
         tally.tunnel = false

@@ -19,3 +19,10 @@ tunnel-min-packet-bytes: 256
 
 # 是否尝试协商大包 ZSTD；false 时仍使用原有 Deflate/原版路径。
 zstd-enabled: true
+
+# 实验性区块缓存/补丁；默认关闭。开启后直连也使用兼容隧道，客户端需明确授权。
+chunk-cache-enabled: false
+# 首次启动自动生成；不同后端不要复用 UUID，复制配置后应重新生成。
+chunk-cache-namespace: "00000000-0000-0000-0000-000000000000"
+# 世界重置或数据包/注册表/可见性策略变更后递增。
+chunk-cache-epoch: 0

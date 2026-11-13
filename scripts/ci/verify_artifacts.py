@@ -22,6 +22,7 @@ def main():
         names = set(jar.namelist())
         assert "me/albert/netsqueeze/NetSqueeze.class" in names
         assert "me/albert/netsqueeze/protocol/TunnelProtocol.class" in names
+        assert "me/albert/netsqueeze/protocol/SnapshotCodec.class" in names
         assert "me/albert/netsqueeze/tunnel/TunnelCompressor.class" in names
         assert "com/github/luben/zstd/Zstd.class" in names
         assert any(n.endswith((".so", ".dll", ".dylib")) for n in names), "Missing ZSTD native libraries"
@@ -32,9 +33,13 @@ def main():
         assert "${version}" not in descriptor
         config = jar.read("config.yml").decode("utf-8")
         assert "compression-level: 6" in config
+        assert "chunk-cache-enabled: false" in config
     with zipfile.ZipFile(client) as jar:
         assert "me/albert/netsqueeze/protocol/TunnelProtocol.class" in jar.namelist()
         assert "me/albert/netsqueeze/client/TunnelClientHandler.class" in jar.namelist()
+        assert "me/albert/netsqueeze/client/ClientChunkCache.class" in jar.namelist()
+        assert "me/albert/netsqueeze/client/cache/SnapshotDiskStore.class" in jar.namelist()
+        assert "me/albert/netsqueeze/protocol/SnapshotCodec.class" in jar.namelist()
         assert "me/albert/netsqueeze/client/ZstdFrameDecoder.class" in jar.namelist()
         meta = json.loads(jar.read("fabric.mod.json"))
         assert meta["version"] == version
