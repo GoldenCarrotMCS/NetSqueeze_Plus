@@ -1,7 +1,6 @@
 package me.albert.netsqueeze.client;
 
 import com.github.luben.zstd.Zstd;
-import com.github.luben.zstd.ZstdDecompressCtx;
 
 /** Probe once per client process; a broken/unsupported native library never advertises ZSTD. */
 final class ZstdSupport {
@@ -15,12 +14,20 @@ final class ZstdSupport {
     private static boolean probe() {
         try {
             byte[] compressed = Zstd.compress(new byte[]{1}, 1);
-            ZstdDecompressCtx ctx = new ZstdDecompressCtx();
-            try { return ctx.setLongMax(23).decompress(compressed, 1)[0] == 1; }
-            finally { ctx.close(); }
+            byte[] restored = ZstdFrameDecoder.decode(compressed);
+            if (restored.length != 1 || restored[0] != 1) throw new IllegalStateException("ZSTD probe round-trip mismatch");
+            NetSqueezeClient.LOGGER.info("ZSTD compatibility probe passed; implementation: {}", implementationSource());
+            return true;
         } catch (LinkageError | RuntimeException e) {
-            NetSqueezeClient.LOGGER.warn("ZSTD native support unavailable; retaining Deflate", e);
+            NetSqueezeClient.LOGGER.warn("ZSTD Java API/native compatibility probe failed; retaining Deflate. Implementation: " + implementationSource(), e);
             return false;
         }
+    }
+
+    private static String implementationSource() {
+        try {
+            var source = Zstd.class.getProtectionDomain().getCodeSource();
+            return source == null ? "unknown" : source.getLocation().toString();
+        } catch (RuntimeException e) { return "unknown"; }
     }
 }

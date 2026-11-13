@@ -106,7 +106,9 @@ jobs:
         if: always()
         with:
           name: client-tests-${{ matrix.minecraft }}
-          path: client/build/reports/tests/
+          path: |
+            client/build/reports/tests/
+            client/build/test-results/
           if-no-files-found: warn
           retention-days: 14
 

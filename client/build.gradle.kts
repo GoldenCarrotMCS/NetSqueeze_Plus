@@ -54,3 +54,35 @@ tasks.test {
     inputs.dir(fixtures)
     systemProperty("netsqueeze.fixtures", fixtures.get().asFile.absolutePath)
 }
+
+// TEST ONLY: reproduce older mod-provided classes lacking setLongMax in a fresh JVM.
+// Production still embeds 1.5.7-26; do not resolve both in the same configuration.
+val zstdLegacyRuntime by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+dependencies { add(zstdLegacyRuntime.name, "com.github.luben:zstd-jni:1.5.7-17") }
+
+val zstdLegacyCompatibility by tasks.registering(Test::class) {
+    description = "Run production decoding with legacy zstd-jni in an isolated JVM"
+    group = "verification"
+    useJUnitPlatform()
+    dependsOn(rootProject.tasks.named("test"), tasks.named("testClasses"))
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = zstdLegacyRuntime + sourceSets.test.get().runtimeClasspath.filter {
+        !it.name.startsWith("zstd-jni-")
+    }
+    filter {
+        includeTestsMatching("*ZstdRuntimeCompatibilityTest")
+        includeTestsMatching("*ZstdFrameDecoderTest")
+        includeTestsMatching("*ZstdFrameHeaderTest")
+        includeTestsMatching("*HybridProtocolRoundTripTest")
+        includeTestsMatching("*ProtocolRoundTripTest")
+    }
+    val fixtures = rootProject.layout.buildDirectory.dir("protocol-fixtures")
+    inputs.dir(fixtures)
+    systemProperty("netsqueeze.fixtures", fixtures.get().asFile.absolutePath)
+    systemProperty("netsqueeze.zstd.compat.version", "1.5.7-17")
+}
+tasks.check { dependsOn(zstdLegacyCompatibility) }

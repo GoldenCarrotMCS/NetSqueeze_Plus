@@ -290,3 +290,7 @@ NetSqueeze 是独立实现，没有用它的代码。
 后端和 Fabric 客户端可协商区块快照复用与小变化补丁，Velocity 无需插件。客户端默认不保存，玩家使用本地 `/nsqcache` 查看授权与清理选项；管理员在后端配置 `chunk-cache-enabled: true` 后重启。启用直连时也会切到隧道；异常的缓存引用或保序失败会安全断线，不是无条件恢复。
 
 本功能尚须 GitHub 构建和真实环境验收，不能凭代码宣称 26.2 运行通过或实际流量收益。服务端命名空间、epoch 失效、客户端授权、数据清理、资源限制和测量方法详见 [区块缓存设计和使用说明](docs/CHUNK-CACHE-DESIGN.md)。
+
+### 整合包中 ZSTD 无法启用的排查
+
+`ZstdDecompressCtx.setLongMax(int)` 的 `NoSuchMethodError` 表示其他模组提供的旧 ZSTD Java 类与编译时 API 不一致，并非一定是原生库提取失败；只改 `zstd-enabled` 和重启不会补齐这个方法。源码兼容修复改为 JNI 前校验帧头窗口与大小，并用实际解码路径做探测，不要求删除 Axiom/Miku-ZSTD。构建与真实整合包验证状态见 [ZSTD 兼容说明](docs/ZSTD-COMPATIBILITY.md)。

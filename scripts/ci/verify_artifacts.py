@@ -41,6 +41,7 @@ def main():
         assert "me/albert/netsqueeze/client/cache/SnapshotDiskStore.class" in jar.namelist()
         assert "me/albert/netsqueeze/protocol/SnapshotCodec.class" in jar.namelist()
         assert "me/albert/netsqueeze/client/ZstdFrameDecoder.class" in jar.namelist()
+        assert "me/albert/netsqueeze/protocol/ZstdFrameHeader.class" in jar.namelist()
         meta = json.loads(jar.read("fabric.mod.json"))
         assert meta["version"] == version
         assert meta["environment"] == "client"
