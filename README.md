@@ -4,13 +4,13 @@
 
 <br/>
 
-**服务器发给玩家的数据，按 tick 攒成一帧、整条连接共用一个压缩流。<br/>装了模组的玩家占用的服务器上行带宽砍一半以上，没装的什么都不变。**
+**GoldenCarrot服务器维护的网络压缩分支。直连按 flush 攒帧、连接共享压缩流；Velocity 路径使用普通载荷隧道。<br/>压缩收益取决于传输模式与实际流量，没装模组的保持原版。**
 
-**对按带宽或流量计费的服务器，带宽成本随之大幅下降。**
+**用于减少网络冗余；是否降低带宽成本，需要在实际出口测量。**
 
 <br/>
 
-[![Build](https://img.shields.io/github/actions/workflow/status/eternity4719/NetSqueeze/build.yml?branch=master&style=flat-square&label=Build)](https://github.com/eternity4719/NetSqueeze/actions/workflows/build.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/GoldenCarrotMCS/NetSqueeze_Plus/build.yml?branch=master&style=flat-square&label=Build)](https://github.com/GoldenCarrotMCS/NetSqueeze_Plus/actions/workflows/build.yml)
 ![Minecraft](https://img.shields.io/badge/Minecraft-26.1--26.3-62B47A?style=flat-square&logo=minecraft&logoColor=white)
 ![Server](https://img.shields.io/badge/Server-Paper%20%2F%20Folia-1f6feb?style=flat-square)
 ![Client](https://img.shields.io/badge/Client-Fabric%20%28no%20API%29-dbb06b?style=flat-square)
@@ -30,7 +30,7 @@
 <tr>
 <td width="33%" valign="top">
 
-### 📉 省一半以上
+### 📉 减少重复数据
 同一 tick 的包合成一帧，整条连接共用一个 deflate 流，前面发过的内容后面直接引用，重复越多省得越多。
 
 </td>
@@ -43,14 +43,14 @@
 <td width="33%" valign="top">
 
 ### 🛡️ 谁没装都不坏
-握手没对上就退回原版。没装模组的玩家照常进服，装了模组的玩家照常去别的服务器。
+握手没有成功就保持原版。没装模组的玩家照常进服，装了模组的玩家照常去别的服务器。
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-### ⏱️ 零额外延迟
+### ⏱️ 不定时攒包
 攒帧边界就是服务器本来的 flush，不加定时器、不等包。
 
 </td>
@@ -63,7 +63,7 @@ ViaVersion、PacketEvents、Grim、ProtocolLib、TAB 同装实测，它们照常
 <td valign="top">
 
 ### 🎁 能识别、能发奖励
-装了模组的玩家身上有 metadata，别的插件一行代码就能判断，伪造不了。
+启用流式协议的玩家身上有 metadata，别的插件可用它判断协议能力；这不是客户端身份认证。
 
 </td>
 </tr>
@@ -106,7 +106,7 @@ flowchart LR
 
 ## 📊 实测
 
-永恒世界服务器实测（Canvas 26.1.2，约 250 人在线，玩家多为 26.1.2 客户端），稳态下**每个玩家占用的服务器上行带宽**（含 TCP/IP 包头估算）：
+GoldenCarrot服务器维护此分支。以下为上游历史参考数据，并非 GoldenCarrot服务器复测结果（Canvas 26.1.2，约 250 人在线，玩家多为 26.1.2 客户端），稳态下**每个玩家占用的服务器上行带宽**（含 TCP/IP 包头估算）：
 
 ```mermaid
 %%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#2da44e"}}}}%%
@@ -131,7 +131,7 @@ xychart-beta
 > **flush 次数决定能攒多少。** Folia 系核心原本只在区域 tick 的后半段暂停 flush，前半段（处理玩家发来的包、区域任务、
 > 实体调度器）里发的包一个包 flush 一次。NetSqueeze 在没改过核心的服务器上照样能用，只是每帧攒到的包少，省的比例会低一些。
 
-## 🔄 工作流程
+## 🔄 直连 v1 工作流程
 
 ```mermaid
 sequenceDiagram
@@ -154,23 +154,23 @@ sequenceDiagram
 
 | | 服务端 | 客户端 |
 |---|---|---|
-| Minecraft | **26.1.x** 的 Paper / Folia 系 | **26.1 ~ 26.3**（一个 jar 通用） |
+| Minecraft | **26+ 正式版，启动时检查网络 API**；26.2 为重点目标 | **26.1 ~ 26.3** 纳入 CI；后续 26.x 是待验证范围 |
 | 运行环境 | Java 25 | Fabric Loader 0.19+，**不需要 Fabric API** |
 | 前置 | 无（Kotlin 运行库已打进 jar） | 无 |
 
 <details>
 <summary>测试覆盖范围</summary>
 
-- 服务端开发和线上都跑在 Canvas 26.1.2；插件直接用到服务端内部类，绑定 26.1.x。纯 Paper、Purpur 没有专门测过。
+- 1.3.0 已移除服务端只允许 26.1.2 的限制。连接、载荷与断线包通过缓存适配器访问；API 能力检查失败时不注册网络处理器。CI 覆盖 Paper 26.1.1/26.1.2/26.2/26.3、Folia 26.1.2/26.2/26.3。26.1 服务端缺少单独开发包，未单独证明；Canvas/Purpur 等派生核心仍由用户验收。未来版本不能提前保证兼容。
 - 客户端按 26.1.2 编译，26.1、26.1.1、26.1.2、26.2、26.3 五个正式版逐个核对过用到的类、方法和登录流程。
-- 正版服务器的加密已经处理，但永恒世界是离线模式，正版场景没有实测过。
+- 正版服务器加密的管线已处理；上游测试环境为离线模式，GoldenCarrot服务器的正版和代理场景仍需单独验收。
 
 </details>
 
 ## 🚀 安装
 
-插件和模组都在 [Releases](https://github.com/eternity4719/NetSqueeze/releases) 下载；最新提交的构建在
-[Actions](https://github.com/eternity4719/NetSqueeze/actions/workflows/build.yml) 里每次运行的 Artifacts 中。
+插件和模组都在 [Releases](https://github.com/GoldenCarrotMCS/NetSqueeze_Plus/releases) 下载；最新提交的构建在
+[Actions](https://github.com/GoldenCarrotMCS/NetSqueeze_Plus/actions/workflows/build.yml) 里每次运行的 Artifacts 中。
 
 1. **服务端**：`NetSqueeze-x.x.x-all.jar` 放进 `plugins/`，重启。
 2. **客户端**：`NetSqueeze-Client-x.x.x.jar` 放进 `mods/`。
@@ -178,7 +178,7 @@ sequenceDiagram
 
 ## 💻 命令
 
-权限 `netsqueeze.admin`（默认 OP）。
+权限 `netsqueeze.admin`（默认 OP）。命令会区分直连流、代理隧道及后端出网，不能把后端统计当成 VC 出口流量。
 
 | 命令 | 作用 |
 |---|---|
@@ -189,20 +189,22 @@ sequenceDiagram
 
 ## 🎁 给其他插件：判断玩家装没装模组
 
-装了模组的在线玩家身上有 metadata `netsqueeze_mod`（值为 `true`），进服事件的 LOWEST 阶段就已经打上，
-其他插件在自己的进服监听里就能读到：
+装了模组的在线玩家身上有 metadata `netsqueeze_mod`（值为 `true`），直连模式在进服 LOWEST 阶段打上；代理隧道需要等 PLAY 阶段 ACK 后再打上，
+代理模式的业务需要延后检查，不能仅在进服监听里读一次：
 
 ```java
-boolean modded = player.hasMetadata("netsqueeze_mod");
+org.bukkit.plugin.Plugin nsq = org.bukkit.Bukkit.getPluginManager().getPlugin("NetSqueeze");
+boolean modded = nsq != null && player.getMetadata("netsqueeze_mod").stream()
+    .anyMatch(value -> value.getOwningPlugin() == nsq && value.asBoolean());
 ```
 
-伪造握手、却不会解压的客户端，会在服务器切到新格式后立刻掉线。所以带着这个标记还能正常在线的，就是真装了模组，
-可以放心拿来发奖励。
+仅伪造 hello 而不能解压的客户端无法持续正常通信，但任何正确实现公开协议的客户端都可以协商成功。
+此标记表示服务端已切换协议，不是原版模组的签名证明，也不能单独作为反作弊、身份认证或防刷奖励机制。
 
 ## ⚠️ 注意
 
-- **热重载**（PlugManX 等）：已经切到新格式的连接没法交接给新的插件实例，卸载时会给这些玩家发一条
-  「服务器网络组件更新，请重新连接」后断开，没装模组的玩家无感。建议放在定时重启里更新插件。
+- **热重载**（PlugManX 等）：直连已经切到裸流格式的连接没法交接给新的插件实例，卸载时会给这些玩家发一条
+  「服务器网络组件更新，请重新连接」后断开，没装模组的玩家无感；代理隧道可通过 STOP 回到标准传输。仍建议放在定时重启里更新插件。
 - 压缩出错没法退回原版（客户端已经切换），出错的连接会被断开，第一条堆栈打在后台，`/nsq` 里能看到出错次数。
 
 ## 📜 协议
@@ -224,23 +226,55 @@ boolean modded = player.hasMetadata("netsqueeze_mod");
 
 </details>
 
-## 🛠️ 构建
+## 🌐 Velocity（VC）
 
-<details>
-<summary>需要 JDK 25</summary>
+**不需要 VC 插件。** 同时更新后端和客户端至 1.4.0，在每个代理后端设置 `transport-mode: velocity` 并重启。
 
-```bash
-# 插件在 build/libs/*-all.jar，客户端模组在 client/build/libs/
-./gradlew build
-```
+代理隧道要求两端**实际协议号一致**（例如后端 26.2 + 客户端 26.2）：区块/实体更新等白名单数据封装成普通 CustomPayload，VC 正常转发；保活、聊天、转服和配置切换仍走原版。协议号不同则保持原版，不会绕过 VC/Via 的跨版本转换，也不冒充已加速。直连 v1 / 隧道 v2 的旧客户端回退保留；ZSTD 需要双方更新并完成 v3 协商。
 
-`client/` 是根构建的子项目，Fabric Loom 在根项目上统一声明。
+详细方案、部署、检测时机、统计口径和验证限制见 [Velocity 适配说明](docs/VELOCITY.md)。隧道收益不等于上游裸流实测，VC 出口流量需要独立测量。
 
-GitHub Actions（`.github/workflows/build.yml`）每次推送都会照上面的步骤构建，两个 jar 作为 Artifacts 上传。
-发版不用手动打标签：改了 `build.gradle.kts` 里的插件版本号推到 master，GitHub 上还没有这个版本的 Release 时，
-会自动打 `v<版本号>` 标签并发布，附上两个 jar。
+## 📦 大包 ZSTD（1.4.0）
 
-</details>
+- 默认仅对**编码后单包 ≥ 65536 字节**且双方声明支持时尝试 ZSTD level 1；直连小包仍连续 Deflate，VC 极小包仍原版直通，其余小包仍按原有 Deflate 隧道发送。
+- 独立 ZSTD 大包不进入小包的连续 Deflate 字典。大包前收完已有帧但不主动 flush，不新增定时器或等待延迟。
+- ZSTD 失败或结果不比 raw 包帧更小时，尚未推进共享字典，可安全回退 Deflate。这不是每次同时比较两种压缩结果，也不保证出口流量一定降低。
+- 关闭 `zstd-enabled` 或两端原生库探测失败时保持 Deflate；JVM 参数 `-Dnetsqueeze.zstd.disable=true` 可在协商前禁用本进程能力。连接已经使用的算法格式不会被动态替换。
+- ZSTD-JNI 及其原生库随两端 Jar 打包，客户端使用嵌套 Jar，**不需要另装库、Fabric API 或 VC 插件**。Jar 会比以前约 25 KiB 的客户端大，这是打入原生库的正常变化。
+- 仍要求两端 Minecraft 协议号一致（例如 26.2 + 26.2）；`/nsq` 新增直连/隧道 ZSTD 大包计数。日志“已协商”不证明已经有大包使用 ZSTD，计数增长才代表实际选中。
+- 客户端先验证单帧边界及内容尺寸（单包 8 MiB 加长度前缀），再按最多 8 MiB 窗口解压，不接受未知大小、尾随或拼接 ZSTD 帧。
+
+## ⚙️ 配置
+
+首次启用生成 `plugins/NetSqueeze/config.yml`，修改后重启生效，不提供协议热重载命令。
+
+| 配置 | 默认值 | 说明 |
+|---|---|---|
+| `transport-mode` | `auto` | `auto/direct/velocity`；通过 VC 建议明确设 `velocity`，不在 VC 安装插件 |
+| `tunnel-min-packet-bytes` | `256` | 小于此大小的白名单原包保留原版传输，避免隧道头开销 |
+| `zstd-enabled` | `true` | 是否协商大包 ZSTD，修改后重启 |
+| `zstd-min-packet-bytes` | `65536` | 编码后单包达到 64 KiB 才尝试 ZSTD；1024～8388608 |
+| `zstd-level` | `1` | 1～5；独立 ZSTD 帧，默认低级别控制 CPU |
+| `enabled` | `true` | 是否注册压缩和统计处理器 |
+| `compression-level` | `6` | 0～9；更高通常更耗 CPU |
+| `max-frame-raw-bytes` | `8388608` | 未压缩数据收帧阈值，1024～8388608；提前收帧不主动增加 flush；单个合法包可超过该阈值，但不能超过固定协议安全上限 |
+| `log-first-failure` | `true` | 每个统计周期记录第一条压缩异常堆栈 |
+
+客户端固定安全边界：流式压缩帧不超过 16 MiB、解压结果不超过 64 MiB，切换前仍遵守原版帧上限。服务端限制每个子帧的输入，必要时拆成多个完整子帧；v3 的压缩体首字节为算法标记（0=连续 Deflate、1=独立 ZSTD）；旧 v1/v2 回退不增加标记。ZSTD 内容大小与窗口均有独立上限。
+
+玩家历史只保留最多 10,000 条离线记录，离线超过 24 小时后在下一次进退服时惰性淘汰；在线记录不会因容量限制被删除。`/nsq reset` 清理离线历史并重新允许记录第一条失败堆栈。
+
+## 🛠️ 构建与验证
+
+**构建、测试执行和服务器启动全部交给 GitHub Actions，不在本地构建。**
+
+- PR、任意分支推送或手动运行 **Build**：构建插件/模组，执行协议对拍和边界测试，检查 Jar 并生成 SHA-256。
+- 成功后的 `NetSqueeze` Artifact 包含两个版本相同的 Jar 和 `SHA256SUMS.txt`；测试报告另存为 `test-reports`。
+- 独立发布 job 只处理可信分支推送，或明确勾选 `publish_jars` 的手动构建，不从 PR 发布。`master` 按版本号发布正式版；其他分支每个提交自动发布 `preview-v<版本>-<提交>` 预发布，带两个 Jar 和 SHA-256，且不会覆盖正式版 Latest。已有标签/版本不强制覆盖。
+- 依赖锁与校验元数据通过 **Dependency baseline** 手动生成、人工审核后提交；首次基线提交前不能声称传递依赖已全部校验。
+- 可选服务器烟测必须手动提供目标 26+ 服务端 Jar、SHA-256 和明确的 EULA 同意；它不测试真实玩家握手。
+
+完整贡献流程、测试覆盖和兼容性限制见 [CONTRIBUTING.md](CONTRIBUTING.md)。CI 编译、适配器链接与协议测试不能替代用户的真实服务器/Fabric/VC 验收；不会自动启动游戏或服务器。
 
 ## 🙏 致谢
 
@@ -250,3 +284,21 @@ NetSqueeze 是独立实现，没有用它的代码。
 ## 📄 许可
 
 [MIT](LICENSE)
+
+### 实验性区块缓存（1.5.0，默认关闭）
+
+后端和 Fabric 客户端可协商区块快照复用与小变化补丁，Velocity 无需插件。客户端默认不保存，玩家使用本地 `/nsqcache` 查看授权与清理选项；管理员在后端配置 `chunk-cache-enabled: true` 后重启。启用直连时也会切到隧道；异常的缓存引用或保序失败会安全断线，不是无条件恢复。
+
+本功能尚须 GitHub 构建和真实环境验收，不能凭代码宣称 26.2 运行通过或实际流量收益。服务端命名空间、epoch 失效、客户端授权、数据清理、资源限制和测量方法详见 [区块缓存设计和使用说明](docs/CHUNK-CACHE-DESIGN.md)。
+
+### 整合包中 ZSTD 无法启用的排查
+
+`ZstdDecompressCtx.setLongMax(int)` 的 `NoSuchMethodError` 表示其他模组提供的旧 ZSTD Java 类与编译时 API 不一致，并非一定是原生库提取失败；只改 `zstd-enabled` 和重启不会补齐这个方法。源码兼容修复改为 JNI 前校验帧头窗口与大小，并用实际解码路径做探测，不要求删除 Axiom/Miku-ZSTD。构建与真实整合包验证状态见 [ZSTD 兼容说明](docs/ZSTD-COMPATIBILITY.md)。
+
+### 每连接 ZSTD 字典（1.6.0）
+
+新增 `zstd-dictionary-enabled: true`；仅双方都支持且协商成功时启用，不改变原有 64 KiB 大包门槛及小包算法。上一条成功的 ZSTD 包派生最多 64 KiB 的内存字典，不写盘、不发送训练样本、不同玩家和后端会话不共享。独立 ZSTD、字典 ZSTD 比较后择优，缺少历史或收益不足保留原路径。
+
+直连使用新的 hello/enable，隧道 v5 明确声明是否带区块缓存信封；旧 v1/v2/v3/v4 仍可降级。字典无需启用区块磁盘缓存或额外安装 VC 插件。客户端日志 `dictionary=true` 表示协商，`/nsq` 字典帧增长才是实际选中。指标是压缩体比较，不是 VC 出口节省。比较两种编码会增加 CPU，未知场景收益需自行测量。
+
+实现、安全边界和未执行的验收见 [ZSTD 字典说明](docs/ZSTD-DICTIONARY.md)。

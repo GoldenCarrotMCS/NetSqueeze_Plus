@@ -25,11 +25,19 @@ public final class NetSqueezeClient {
 
     public static final Logger LOGGER = LoggerFactory.getLogger("NetSqueeze");
 
-    static final int VERSION = 1;
+    static final int VERSION = 3;
+    static final Identifier HELLO_DICT = Identifier.fromNamespaceAndPath("netsqueeze", me.albert.netsqueeze.protocol.DictionaryProtocol.HELLO);
+    static final Identifier ENABLE_DICT = Identifier.fromNamespaceAndPath("netsqueeze", me.albert.netsqueeze.protocol.DictionaryProtocol.ENABLE);
 
     static final Identifier HELLO = Identifier.fromNamespaceAndPath("netsqueeze", "hello_v" + VERSION);
 
-    static final Identifier ENABLE = Identifier.fromNamespaceAndPath("netsqueeze", "enable");
+    static final Identifier HELLO_ZSTD = Identifier.fromNamespaceAndPath("netsqueeze", "hello_v" + VERSION + "_zstd");
+
+    static final Identifier ENABLE_ZSTD = Identifier.fromNamespaceAndPath("netsqueeze", "enable_v" + VERSION + "_zstd");
+
+    static final Identifier LEGACY_ENABLE = Identifier.fromNamespaceAndPath("netsqueeze", "enable");
+    static final Identifier LEGACY_HELLO = Identifier.fromNamespaceAndPath("netsqueeze", "hello_v1");
+    static final Identifier ENABLE = Identifier.fromNamespaceAndPath("netsqueeze", "enable_v" + VERSION);
 
     private NetSqueezeClient() {
     }
@@ -43,7 +51,7 @@ public final class NetSqueezeClient {
 
     /**
      * 正版服登录时原版把 decrypt 插在 splitter 前面,正好夹在解码器和 splitter 中间,解码器就会看到密文,得挪到 decrypt 后面。
-     * 这时服务端在等加密回应,不会有新字节进来,换个新实例不丢东西(本服是离线模式,走不到这里)
+     * 这时服务端在等加密回应,不会有新字节进来,换个新实例不丢东西(GoldenCarrot服务器的正版/代理链路需要单独验收)
      */
     public static void moveAfterDecrypt(final ChannelPipeline pipeline) {
         if (pipeline.get(HandlerNames.DECRYPT) == null || pipeline.get(StreamDecoder.NAME) == null) return;
@@ -51,10 +59,26 @@ public final class NetSqueezeClient {
         pipeline.addAfter(HandlerNames.DECRYPT, StreamDecoder.NAME, new StreamDecoder());
     }
 
+    /** 新协议建立后重新放在 bundler 前；原版会把 bundler 插到 decoder 的紧后方。 */
+    public static void installTunnel(final Channel channel) {
+        if (channel == null) return;
+        Runnable install = () -> {
+            ChannelPipeline pipeline = channel.pipeline();
+            if (pipeline.get(HandlerNames.DECODER) == null) return;
+            if (pipeline.get(TunnelClientHandler.NAME) != null) pipeline.remove(TunnelClientHandler.NAME);
+            pipeline.addAfter(HandlerNames.DECODER, TunnelClientHandler.NAME, new TunnelClientHandler());
+        };
+        if (channel.eventLoop().inEventLoop()) install.run();
+        else channel.eventLoop().execute(install);
+    }
+
     /** 登录完成、出站已切到配置协议后调;解码器没挂上(内存连接等)就不发,否则服务端一切换这边就解不了 */
     public static void sendHello(final Connection connection) {
         final Channel channel = ((ConnectionAccessor) connection).netsqueeze$getChannel();
         if (channel == null || channel.pipeline().get(StreamDecoder.NAME) == null) return;
-        connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(HELLO)));
+        if (ZstdDictionarySupport.available()) connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(HELLO_DICT)));
+        connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(ZstdSupport.available() ? HELLO_ZSTD : HELLO)));
+        // Old servers ignore the first hello and negotiate their unchanged v1 format.
+        connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(LEGACY_HELLO)));
     }
 }

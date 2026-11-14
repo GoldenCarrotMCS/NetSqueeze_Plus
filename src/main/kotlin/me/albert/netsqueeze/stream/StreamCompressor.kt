@@ -7,9 +7,11 @@ import io.netty.channel.ChannelOutboundHandlerAdapter
 import io.netty.channel.ChannelPromise
 import io.netty.util.ReferenceCountUtil
 import io.netty.util.concurrent.PromiseNotifier
+import me.albert.netsqueeze.protocol.ZstdDictionary
 import me.albert.netsqueeze.stats.PlayerTally
 import me.albert.netsqueeze.stats.StreamStats
-import net.minecraft.network.HandlerNames
+import me.albert.netsqueeze.platform.NetworkNames as HandlerNames
+import me.albert.netsqueeze.platform.VarInts as VarInt
 import java.nio.channels.ClosedChannelException
 
 /**
@@ -21,7 +23,15 @@ import java.nio.channels.ClosedChannelException
  * 不是 ByteBuf 的出站消息(原版切协议的配置任务等)原样往下传。
  * 全部方法都在这条连接的 netty 线程上跑。出错退不回原版格式(客户端已经切了),只能断开。
  */
-internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
+internal class StreamCompressor(
+    private val compressionLevel: Int = 6,
+    private val maxFrameRawBytes: Int = 8 * 1024 * 1024,
+    private val useZstd: Boolean = false,
+    private val zstdMinPacketBytes: Int = 64 * 1024,
+    private val zstdLevel: Int = 1,
+    private val markedFrames: Boolean = true,
+    useDictionary: Boolean = false
+) : ChannelOutboundHandlerAdapter() {
 
     /** 配置阶段切换时还不知道是谁,进服后由 Injector 绑上 */
     @Volatile
@@ -31,9 +41,10 @@ internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
     private val promises = ArrayList<ChannelPromise>()
     private var pendingNanos = 0L
     private var closed = false
+    private val dictionary = if (useDictionary && useZstd && markedFrames) ZstdDictionary() else null
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
-        deflater = FrameDeflater(ctx.alloc())
+        deflater = FrameDeflater(ctx.alloc(), compressionLevel, markedFrames)
         StreamStats.active.incrementAndGet()
     }
 
@@ -56,18 +67,33 @@ internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
             return
         }
 
-        val start = System.nanoTime()
         try {
+            require(msg.readableBytes() <= ZstdFrame.MAX_INPUT) { "NetSqueeze packet exceeds safety limit" }
+            if (markedFrames && useZstd && msg.readableBytes() >= zstdMinPacketBytes) {
+                if (deflater.pendingPackets > 0) emit(ctx)
+                val started = System.nanoTime()
+                if (emitZstd(ctx, msg, promise)) {
+                    return
+                }
+                pendingNanos += System.nanoTime() - started
+                // 不可压缩的小包/高熵大包回退 Deflate；此时没有推进 ZSTD 或 Deflate 字典。
+            }
+            // 不新增 flush 或计时器；只提前写出完整子帧，限制缓存和 promise 数量。
+            val size = msg.readableBytes().toLong() + VarInt.getByteSize(msg.readableBytes())
+            if (deflater.pendingPackets > 0 &&
+                (deflater.pendingRaw + size > maxFrameRawBytes || deflater.pendingPackets >= 4096)) emit(ctx)
+            val start = System.nanoTime()
             deflater.feed(msg)
+            pendingNanos += System.nanoTime() - start
+            if (!promise.isVoid) promises += promise
+            if (deflater.pendingRaw >= maxFrameRawBytes) emit(ctx)
         } catch (e: Throwable) {
-            promise.tryFailure(e)
+            if (!promise.isVoid) promise.tryFailure(e)
             fail(ctx, e)
             return
         } finally {
             msg.release()
         }
-        pendingNanos += System.nanoTime() - start
-        if (!promise.isVoid) promises += promise
     }
 
     override fun flush(ctx: ChannelHandlerContext) {
@@ -87,6 +113,7 @@ internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
         if (closed) return
         closed = true
         deflater.close()
+        dictionary?.close()
         failPromises(ClosedChannelException())
     }
 
@@ -108,21 +135,47 @@ internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
         val start = System.nanoTime()
         val raw = deflater.pendingRaw
         val packets = deflater.pendingPackets
+        val target = checkNotNull(ctx.pipeline().context(HandlerNames.PREPENDER)) {
+            "NetSqueeze prepender disappeared"
+        }
         val frame = deflater.finish() ?: return
         val size = frame.readableBytes().toLong()
         // prepender 的 context 往下写 = 从 prepender 的下一个(encrypt / socket 方向)开始,compress 和 prepender 都不经过
-        val target = ctx.pipeline().context(HandlerNames.PREPENDER) ?: ctx
         target.write(frame, framePromise(ctx))
         pendingNanos += System.nanoTime() - start
         StreamStats.record(tally, raw, size, packets, pendingNanos)
         pendingNanos = 0
     }
 
-    private fun framePromise(ctx: ChannelHandlerContext): ChannelPromise {
-        if (promises.isEmpty()) return ctx.voidPromise()
+    private fun emitZstd(ctx: ChannelHandlerContext, msg: ByteBuf, original: ChannelPromise): Boolean {
+        val target = checkNotNull(ctx.pipeline().context(HandlerNames.PREPENDER)) {
+            "NetSqueeze prepender disappeared"
+        }
+        val started = System.nanoTime()
+        val frame = ZstdFrame.encode(ctx.alloc(), msg, zstdLevel, dictionary) ?: return false
+        val raw = VarInt.getByteSize(msg.readableBytes()).toLong() + msg.readableBytes()
+        val frameBytes = frame.readableBytes().toLong()
         val promise = ctx.newPromise()
-        promise.addListener(PromiseNotifier<Void, ChannelFuture>(*promises.toTypedArray()))
+        promise.addListener { future ->
+            if (original.isVoid) Unit
+            else if (future.isSuccess) original.trySuccess()
+            else original.tryFailure(future.cause() ?: ClosedChannelException())
+            if (!future.isSuccess) fail(ctx, future.cause() ?: ClosedChannelException())
+        }
+        target.write(frame, promise)
+        StreamStats.recordZstd(tally, raw, frameBytes, System.nanoTime() - started)
+        return true
+    }
+
+    private fun framePromise(ctx: ChannelHandlerContext): ChannelPromise {
+        val promise = ctx.newPromise()
+        val pending = promises.toTypedArray()
         promises.clear()
+        promise.addListener(PromiseNotifier<Void, ChannelFuture>(*pending))
+        // 即使用 voidPromise 写原包，也不能忽略 socket/加密阶段的异步写失败。
+        promise.addListener { future ->
+            if (!future.isSuccess) fail(ctx, future.cause() ?: ClosedChannelException())
+        }
         return promise
     }
 
@@ -130,6 +183,7 @@ internal class StreamCompressor : ChannelOutboundHandlerAdapter() {
         if (closed) return
         closed = true
         deflater.close()
+        dictionary?.close()
         failPromises(e)
         StreamStats.recordFailure(tally?.name ?: ctx.channel().remoteAddress().toString(), e)
         ctx.channel().close()

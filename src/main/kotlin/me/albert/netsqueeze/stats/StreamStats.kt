@@ -17,10 +17,17 @@ internal object StreamStats {
     val frames = LongAdder()
     val segments = LongAdder()
     val deflateNanos = LongAdder()
+    val zstdRaw = LongAdder()
+    val zstdWire = LongAdder()
+    val zstdFrames = LongAdder()
+    val zstdNanos = LongAdder()
     val failures = LongAdder()
 
     /** 当前挂着真压缩的连接数,不随 reset 清零 */
     val active = AtomicInteger()
+
+    @Volatile
+    var logFirstFailure = true
 
     private val failureLogged = AtomicBoolean()
 
@@ -36,15 +43,30 @@ internal object StreamStats {
         deflateNanos.add(nanos)
     }
 
+    fun recordZstd(tally: PlayerTally?, rawBytes: Long, frameBytes: Long, nanos: Long) {
+        tally?.raw?.add(rawBytes)
+        tally?.wire?.add(frameBytes)
+        raw.add(rawBytes)
+        wire.add(frameBytes)
+        zstdRaw.add(rawBytes)
+        zstdWire.add(frameBytes)
+        zstdFrames.increment()
+        packets.increment()
+        zstdNanos.add(nanos)
+        frames.increment()
+        segments.add(segmentsOf(frameBytes))
+    }
+
     /** 真压缩出错只能断开这条连接(客户端已切格式,退不回原版);堆栈全服只打第一条 */
     fun recordFailure(player: String, e: Throwable) {
         failures.increment()
-        if (!failureLogged.compareAndSet(false, true)) return
+        if (!logFirstFailure || !failureLogged.compareAndSet(false, true)) return
         logger.severe("流式压缩出错(玩家 $player),已断开该连接,之后的同类错误只计数不打印")
         e.printStackTrace()
     }
 
     fun reset() {
-        listOf(raw, wire, packets, frames, segments, deflateNanos, failures).forEach { it.reset() }
+        listOf(raw, wire, packets, frames, segments, deflateNanos, zstdRaw, zstdWire, zstdFrames, zstdNanos, failures).forEach { it.reset() }
+        failureLogged.set(false)
     }
 }

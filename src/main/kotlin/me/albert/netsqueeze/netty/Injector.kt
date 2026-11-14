@@ -3,16 +3,23 @@ package me.albert.netsqueeze.netty
 import io.netty.channel.Channel
 import io.netty.channel.ChannelPipeline
 import io.papermc.paper.network.ChannelInitializeListenerHolder
+import me.albert.netsqueeze.config.Settings
 import me.albert.netsqueeze.instance
+import me.albert.netsqueeze.logger
+import me.albert.netsqueeze.platform.ServerNetwork.channelOf
+import me.albert.netsqueeze.stats.PlayerTally
+import me.albert.netsqueeze.tunnel.TunnelCompressor
+import me.albert.netsqueeze.tunnel.TunnelGate
+import me.albert.netsqueeze.tunnel.TunnelHandshake
 import me.albert.netsqueeze.stats.TrafficStats
 import me.albert.netsqueeze.stats.WireCounter
 import me.albert.netsqueeze.stream.HelloHandler
 import me.albert.netsqueeze.stream.Protocol
 import me.albert.netsqueeze.stream.StreamCompressor
+import me.albert.netsqueeze.stream.ZstdFrame
 import net.kyori.adventure.key.Key
-import net.minecraft.network.HandlerNames
+import me.albert.netsqueeze.platform.NetworkNames as HandlerNames
 import org.bukkit.Bukkit
-import org.bukkit.craftbukkit.entity.CraftPlayer
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
@@ -20,7 +27,6 @@ import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.metadata.FixedMetadataValue
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 管线注入。每条新连接一建好就在 packet_handler 前挂握手处理器([HelloHandler]);装了 mod 的在配置阶段握手成功后
@@ -34,6 +40,9 @@ internal object Injector : Listener {
 
     private const val HELLO = "netsqueeze_hello"
     private const val STREAM = "netsqueeze_stream"
+    private const val TUNNEL = "netsqueeze_tunnel"
+    private const val GATE = "netsqueeze_tunnel_gate"
+    private const val ACK = "netsqueeze_tunnel_ack"
     private const val WIRE = "netsqueeze_wire"
 
     /** 装了 mod 的在线玩家身上的 metadata(值 true),别的插件 `player.hasMetadata("netsqueeze_mod")` 判断,发奖励等 */
@@ -44,8 +53,9 @@ internal object Injector : Listener {
     /** 卸载时最多等多久摘完,拍脑袋定的 */
     private const val SHUTDOWN_WAIT_MS = 3000L
 
-    /** 挂过握手处理器的连接(含还没进服的),卸载时逐个摘;关掉的在新连接进来时顺手清 */
-    private val channels: MutableSet<Channel> = ConcurrentHashMap.newKeySet()
+    private val channels = ChannelRegistry()
+    private lateinit var settings: Settings
+    private var useTunnel = false
 
     /**
      * 卸载开始后不再挂新的。Folia 上进服事件在各区域线程并发触发,onDisable 跑完到 Bukkit 注销监听器之间
@@ -54,7 +64,10 @@ internal object Injector : Listener {
     @Volatile
     private var stopped = false
 
-    fun init() {
+    fun init(settings: Settings, useTunnel: Boolean) {
+        this.useTunnel = useTunnel
+        this.settings = settings
+        stopped = false
         Bukkit.getPluginManager().registerEvents(this, instance)
         ChannelInitializeListenerHolder.addListener(LISTENER_KEY, ::onChannelInit)
         Bukkit.getOnlinePlayers().forEach(::inject)
@@ -70,8 +83,9 @@ internal object Injector : Listener {
         ChannelInitializeListenerHolder.removeListener(LISTENER_KEY)
         // 装 mod 的下面会被踢,标记先摘掉
         Bukkit.getOnlinePlayers().forEach { it.removeMetadata(MOD_META, instance) }
-        val targets = HashSet(channels)
+        val targets = channels.snapshot().toMutableSet()
         Bukkit.getOnlinePlayers().forEach { targets += channelOf(it) }
+        targets.forEach(channels::forget)
         val futures = targets.filter { it.isOpen }.map { channel ->
             channel.eventLoop().submit {
                 val pipeline = channel.pipeline()
@@ -80,31 +94,42 @@ internal object Injector : Listener {
                     channel.writeAndFlush(Protocol.reconnectPacket())
                     channel.close()
                 }
-                removeIfPresent(pipeline, HELLO, STREAM, WIRE)
+                (pipeline.get(TUNNEL) as? TunnelCompressor)?.pause()
+                channel.flush()
+                removeIfPresent(pipeline, ACK, GATE, TUNNEL, HELLO, STREAM, WIRE)
             }
         }
         // 各连接分散在几条 netty 线程上并行摘,正常几毫秒;总等待封顶,netty 线程卡死也不至于把卸载拖住
         val deadline = System.currentTimeMillis() + SHUTDOWN_WAIT_MS
-        futures.forEach { it.awaitUninterruptibly((deadline - System.currentTimeMillis()).coerceAtLeast(0)) }
+        futures.forEach {
+            if (!it.awaitUninterruptibly((deadline - System.currentTimeMillis()).coerceAtLeast(0)) || !it.isSuccess) {
+                logger.severe("网络处理器卸载未完成，不能安全热重载；请完整重启服务器。原因：${it.cause()}")
+            }
+        }
     }
 
     /**
      * 握手成功,在这条连接的 netty 线程上调。先用原版格式发 enable,紧接着挂真压缩:同一个 netty 任务里做完,
      * 中间插不进别的出站字节,enable 之后的全是新格式。只在配置阶段切(进服后才来的不理,原版计数已经挂上了)
      */
-    fun enableStream(channel: Channel) {
+    fun enableStream(channel: Channel, useZstd: Boolean, markedFrames: Boolean, useDictionary: Boolean = false) {
         val pipeline = channel.pipeline()
-        if (stopped || !channel.isActive || pipeline.get(HandlerNames.PREPENDER) == null) return
+        if (useTunnel || stopped || !channel.isActive || pipeline.get(HandlerNames.PREPENDER) == null) return
         if (pipeline.get(STREAM) != null || pipeline.get(WIRE) != null) return
-        channel.writeAndFlush(Protocol.enablePacket())
-        pipeline.addAfter(anchorOf(pipeline), STREAM, StreamCompressor())
+        val negotiatedZstd = markedFrames && useZstd && settings.zstdEnabled && ZstdFrame.available()
+        val dictionary = negotiatedZstd && useDictionary && settings.zstdDictionaryEnabled && ZstdFrame.dictionaryAvailable()
+        channel.writeAndFlush(Protocol.enablePacket(negotiatedZstd, markedFrames, dictionary))
+        pipeline.addAfter(anchorOf(pipeline), STREAM, StreamCompressor(
+            settings.compressionLevel, settings.maxFrameRawBytes, negotiatedZstd,
+            settings.zstdMinPacketBytes, settings.zstdLevel, markedFrames, dictionary
+        ))
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     fun onJoin(e: PlayerJoinEvent) = inject(e.player)
 
     /**
-     * 握手在配置阶段就完了,进服时管线里有没有真压缩就是装没装 mod。LOWEST 打标,别的插件在自己的进服监听里就能读到。
+     * 直连 v1 在配置阶段完成，LOWEST 可打标；代理隧道在 PLAY 收到 ACK 后另行打标。
      * 没装的也删一遍:metadata 按名字存、不随下线清,防同名残留上次的值
      */
     @EventHandler(priority = EventPriority.LOWEST)
@@ -118,26 +143,41 @@ internal object Injector : Listener {
     }
 
     @EventHandler
-    fun onQuit(e: PlayerQuitEvent) = e.player.removeMetadata(MOD_META, instance)
+    fun onQuit(e: PlayerQuitEvent) {
+        e.player.removeMetadata(MOD_META, instance)
+        TrafficStats.endSession(e.player.uniqueId, channelOf(e.player))
+    }
 
     /** netty 线程上、连接刚建好时调,这时 packet_handler 已经在管线里 */
     private fun onChannelInit(channel: Channel) {
-        channels.removeIf { !it.isOpen }
-        channels += channel
+        channels.track(channel)
         // 先登记再查 stopped,和 shutdown 的"先置位再取快照"配对:两边总有一边看得到对方
-        if (stopped) return
-        channel.pipeline().addBefore(HandlerNames.PACKET_HANDLER, HELLO, HelloHandler())
+        if (stopped) {
+            channels.forget(channel)
+            return
+        }
+        if (channel.pipeline().get(HandlerNames.PACKET_HANDLER) == null ||
+            channel.pipeline().get(HandlerNames.PREPENDER) == null) {
+            logger.warning("连接管线缺少已验证锚点，保留原版传输：${channel.pipeline().names()}")
+            return
+        }
+        if (!useTunnel) channel.pipeline().addBefore(HandlerNames.PACKET_HANDLER, HELLO, HelloHandler())
     }
 
     private fun inject(player: Player) {
+        if (stopped) return
         val channel = channelOf(player)
-        val tally = TrafficStats.tally(player)
+        val tally = TrafficStats.tally(player, channel)
         // 管线只能在自己的 netty 线程上改,和正在发的包排队,不会插到半个包中间
         channel.eventLoop().execute {
             val pipeline = channel.pipeline()
             // 在 netty 线程上查 stopped:置位后才跑到这里的一律不挂;置位前已经挂上的,摘除任务排在它后面会摘掉
             if (stopped || !channel.isActive) return@execute
-            // 握手只在配置阶段,到进服还没握的就是没装 mod
+            if (pipeline.get(HandlerNames.PREPENDER) == null || pipeline.get(HandlerNames.ENCODER) == null) {
+                logger.warning("连接缺少编码管线锚点，保持原版传输：${pipeline.names()}")
+                return@execute
+            }
+            // 没有 v1 则保留标准链；代理客户端仍可能在 PLAY 完成隧道协商。
             removeIfPresent(pipeline, HELLO)
             val stream = pipeline.get(STREAM) as? StreamCompressor
             tally.startSession(stream != null)
@@ -146,10 +186,31 @@ internal object Injector : Listener {
                 TrafficStats.sampleStreamPipeline = pipeline.names()
                 return@execute
             }
+            if (useTunnel && pipeline.get(TUNNEL) == null) installTunnel(channel, player, tally)
             if (pipeline.get(WIRE) != null) return@execute
             pipeline.addBefore(HandlerNames.PREPENDER, WIRE, WireCounter(tally))
             TrafficStats.samplePipeline = pipeline.names()
         }
+    }
+
+    private fun installTunnel(channel: Channel, player: Player, tally: PlayerTally) {
+        val pipeline = channel.pipeline()
+        if (pipeline.get(HandlerNames.ENCODER) == null) return
+        lateinit var bridge: TunnelCompressor
+        bridge = TunnelCompressor(settings, tally) { active ->
+            TrafficStats.sampleTunnelPipeline = pipeline.names()
+            // ACK 在 Netty，metadata 必须回玩家自己的区域线程；转服/退服后不能标到新会话。
+            if (!stopped) player.scheduler.run(instance, { _ ->
+                if (!stopped && channel.isActive && pipeline.get(TUNNEL) === bridge && bridge.enabled == active) {
+                    if (active) player.setMetadata(MOD_META, FixedMetadataValue(instance, true))
+                    else player.removeMetadata(MOD_META, instance)
+                }
+            }, null)
+        }
+        pipeline.addAfter(anchorOf(pipeline), TUNNEL, bridge)
+        pipeline.addAfter(HandlerNames.ENCODER, GATE, TunnelGate(bridge))
+        pipeline.addBefore(HandlerNames.PACKET_HANDLER, ACK, TunnelHandshake(bridge))
+        bridge.offer()
     }
 
     /** 阈值设成 -1 时没有 compress,真压缩就直接挂在 prepender 尾侧 */
@@ -161,6 +222,4 @@ internal object Injector : Listener {
             if (pipeline.get(name) != null) pipeline.remove(name)
         }
     }
-
-    private fun channelOf(player: Player): Channel = (player as CraftPlayer).handle.connection.connection.channel
 }

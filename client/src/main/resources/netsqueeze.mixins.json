@@ -4,8 +4,11 @@
   "compatibilityLevel": "JAVA_25",
   "client": [
     "ClientHandshakePacketListenerImplMixin",
+    "ClientCacheCommandMixin",
     "ConnectionAccessor",
-    "ConnectionMixin"
+    "ConnectionMixin",
+    "CustomPayloadCodecMixin",
+    "PacketDecoderAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -1,15 +1,28 @@
+# 插件名称、入口与构建时展开的版本号。
 name: NetSqueeze
+# 由根构建版本统一填充。
 version: '${version}'
+# Bukkit 插件入口。
 main: me.albert.netsqueeze.NetSqueeze
+# Bukkit API 最低声明；26+ 网络接口在启动时另做能力检查。
 api-version: '1.21'
+# 采用连接自己的 Netty 线程，不使用传统全局 Bukkit 定时任务。
 folia-supported: true
+# 管理命令注册。
 commands:
+  # 查看网络统计。
   netsqueeze:
     description: 查看装 mod 和没装 mod 玩家的下行流量
+    # 子命令帮助。
     usage: /netsqueeze [players|reset|pipeline]
+    # 短别名。
     aliases: [ nsq ]
+    # 命令由 Bukkit 做权限检查。
     permission: netsqueeze.admin
+# 权限定义。
 permissions:
+  # 管理统计权限。
   netsqueeze.admin:
     description: 使用 /netsqueeze 统计命令
+    # 默认仅管理员可使用。
     default: op
