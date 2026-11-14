@@ -44,7 +44,11 @@ final class StreamDecoder extends ChannelInboundHandlerAdapter {
     /** EnableDetector 在本线程同步调,等交出去的那一帧返回后才生效 */
     void enable(boolean zstdEnabled) { enable(true, zstdEnabled); }
 
-    void enable(boolean markedFrames, boolean zstdEnabled) {
+    void enable(boolean markedFrames, boolean zstdEnabled) { enable(markedFrames, zstdEnabled, false); }
+
+    void enable(boolean markedFrames, boolean zstdEnabled, boolean dictionary) {
+        if (dictionary && (!markedFrames || !zstdEnabled)) throw new IllegalArgumentException("Dictionary requires marked ZSTD");
+        if (dictionary) inflater.enableDictionary();
         this.enablePending = true;
         this.markedFrames = markedFrames;
         this.zstdEnabled = zstdEnabled;

@@ -74,6 +74,9 @@ val zstdLegacyCompatibility by tasks.registering(Test::class) {
         !it.name.startsWith("zstd-jni-")
     }
     filter {
+        includeTestsMatching("*DictionaryRoundTripTest")
+        includeTestsMatching("*DictionaryHelloNegotiationTest")
+        includeTestsMatching("*DictionaryProtocolTest")
         includeTestsMatching("*ZstdRuntimeCompatibilityTest")
         includeTestsMatching("*ZstdFrameDecoderTest")
         includeTestsMatching("*ZstdFrameHeaderTest")

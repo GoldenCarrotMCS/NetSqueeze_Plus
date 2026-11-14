@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "me.albert"
-version = "1.5.1"
+version = "1.6.0"
 
 sourceSets.main { java.srcDir("shared/src/main/java") }
 

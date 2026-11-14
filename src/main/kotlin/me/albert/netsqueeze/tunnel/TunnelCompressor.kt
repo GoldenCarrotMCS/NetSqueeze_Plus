@@ -6,6 +6,8 @@ import io.netty.channel.ChannelOutboundHandlerAdapter
 import io.netty.channel.ChannelPromise
 import io.netty.util.ReferenceCountUtil
 import io.netty.util.concurrent.PromiseCombiner
+import me.albert.netsqueeze.protocol.DictionaryProtocol
+import me.albert.netsqueeze.protocol.ZstdDictionary
 import me.albert.netsqueeze.protocol.ChunkCacheProtocol
 import me.albert.netsqueeze.protocol.SnapshotCodec
 import me.albert.netsqueeze.config.Settings
@@ -47,6 +49,8 @@ internal class TunnelCompressor(
     var chunkCandidate = false
     private var snapshots: SnapshotCodec? = null
     private var cacheMode = false
+    private var dictionary: ZstdDictionary? = null
+    private val dictionaryAcks = arrayOfNulls<Any>(2)
     var snapshotBusy = false
         private set
     var internalEmission = false
@@ -69,6 +73,12 @@ internal class TunnelCompressor(
         return try { context.channel().write(packet) } finally { internalEmission = previous }
     }
 
+    fun dictionaryAck(cache: Boolean): Any {
+        val index = if (cache) 1 else 0
+        return dictionaryAcks[index] ?: me.albert.netsqueeze.platform.ServerNetwork.packetAccess()
+            .id(DictionaryProtocol.ack(session, protocol, cache)).also { dictionaryAcks[index] = it }
+    }
+
     fun cacheAck(zstd: Boolean): Any = me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.ack(session, protocol, zstd))
 
     fun cacheSeed(packetId: Any?): Boolean {
@@ -86,6 +96,10 @@ internal class TunnelCompressor(
 
     fun offer() {
         if (!closed && playing && !enabled) {
+            if (settings.zstdDictionaryEnabled && zstdAvailable && ZstdFrame.dictionaryAvailable()) {
+                val base = ChunkCacheProtocol.Offer(session, protocol, true, UUID.fromString(settings.chunkCacheNamespace), settings.chunkCacheEpoch)
+                context.channel().write(TunnelProtocol.packet(me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(DictionaryProtocol.OFFER), DictionaryProtocol.encode(base, settings.chunkCacheEnabled)))
+            }
             if (settings.chunkCacheEnabled) {
                 val offer = ChunkCacheProtocol.Offer(session, protocol, zstdAvailable, UUID.fromString(settings.chunkCacheNamespace), settings.chunkCacheEpoch)
                 context.channel().write(TunnelProtocol.packet(me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.OFFER), ChunkCacheProtocol.offer(offer)))
@@ -106,8 +120,11 @@ internal class TunnelCompressor(
         if (!closed && !playing) { playing = true; offer() }
     }
 
-    fun acknowledge(useZstd: Boolean = false, marked: Boolean = true, cache: Boolean = false) {
+    fun acknowledge(useZstd: Boolean = false, marked: Boolean = true, cache: Boolean = false, useDictionary: Boolean = false) {
         if (closed || enabled || !playing || !context.channel().isActive) return
+        if (useDictionary && (!useZstd || !marked || !zstdAvailable || !settings.zstdDictionaryEnabled || !ZstdFrame.dictionaryAvailable())) return
+        if (cache && !settings.chunkCacheEnabled) return
+        dictionary = if (useDictionary) ZstdDictionary() else null
         cacheMode = cache && marked && settings.chunkCacheEnabled
         if (cacheMode) snapshots = SnapshotCodec(snapshotMemory, 64L * 1024 * 1024)
         markedFrames = marked
@@ -218,7 +235,7 @@ internal class TunnelCompressor(
     }
 
     private fun emitZstd(msg: ByteBuf, promise: ChannelPromise): Boolean {
-        val frame = try { ZstdFrame.encode(context.alloc(), msg, settings.zstdLevel) }
+        val frame = try { ZstdFrame.encode(context.alloc(), msg, settings.zstdLevel, dictionary) }
         catch (_: LinkageError) { null }
         catch (_: RuntimeException) { null }
         if (frame == null) return false
@@ -243,7 +260,7 @@ internal class TunnelCompressor(
                     .putLong(session.mostSignificantBits).putLong(session.leastSignificantBits).putLong(sequence)
                 sequence = Math.incrementExact(sequence)
                 frame.readBytes(payload.array(), Wire.HEADER_BYTES, length)
-                combined.add(writeCarrier(TunnelProtocol.packet(if (cacheMode) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.DATA) else TunnelProtocol.data(markedFrames), payload.array())))
+                combined.add(writeCarrier(TunnelProtocol.packet(if (dictionary != null) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(DictionaryProtocol.DATA) else if (cacheMode) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.DATA) else TunnelProtocol.data(markedFrames), payload.array())))
                 TunnelStats.payload.add(payload.array().size.toLong())
             }
             combined.finish(completion)
@@ -272,7 +289,7 @@ internal class TunnelCompressor(
             emit()
             if (closed || !enabled) return
             val stop = ByteBuffer.allocate(16).putLong(session.mostSignificantBits).putLong(session.leastSignificantBits)
-            writeCarrier(TunnelProtocol.packet(if (cacheMode) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.STOP) else TunnelProtocol.stop(markedFrames), stop.array()))
+            writeCarrier(TunnelProtocol.packet(if (dictionary != null) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(DictionaryProtocol.STOP) else if (cacheMode) me.albert.netsqueeze.platform.ServerNetwork.packetAccess().id(ChunkCacheProtocol.STOP) else TunnelProtocol.stop(markedFrames), stop.array()))
             enabled = false
             tally.tunnel = false
             TunnelStats.active.decrementAndGet()
@@ -280,9 +297,11 @@ internal class TunnelCompressor(
             deflater = null
             onStateChange(false)
         }
+        dictionary?.close(); dictionary = null
         snapshots?.close(); snapshots = null; cacheMode = false
         playing = false
         session = UUID.randomUUID()
+        dictionaryAcks.fill(null)
         sequence = 0
         reads = 0
     }
@@ -290,6 +309,7 @@ internal class TunnelCompressor(
     override fun handlerRemoved(ctx: ChannelHandlerContext) {
         if (closed) return
         closed = true
+        dictionary?.close(); dictionary = null
         busyTimeout?.cancel(false); busyTimeout = null
         asynchronousPromise?.tryFailure(ClosedChannelException()); asynchronousPromise = null
         gate?.abort()

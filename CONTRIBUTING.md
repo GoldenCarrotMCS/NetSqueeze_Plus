@@ -6,7 +6,7 @@
 - 基线为 Java 25、Kotlin 2.3.20、Minecraft 服务端 26.1.2。保持 dev bundle `26.1.2.build.8-stable` 固定，不能用 `+`。
 - Fabric Loom 在根构建声明固定正式版本，子项目只应用插件；不使用 `mavenLocal()`。
 - 根项目和客户端使用同一个版本号。改协议必须同步 `stream/Protocol.VERSION` 和 `NetSqueezeClient.VERSION`。
-- 修改不自动提交或推送，不接受隐式发布或自动同意 Minecraft EULA。
+- 用户已长期授权本项目开发完成后自行提交并正常推送功能分支，跟进 GitHub Actions 构建和现有预发布流程；不自动合并主分支、强制推送、部署或接受 Minecraft EULA。
 
 ## CI 流程
 

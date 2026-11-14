@@ -6,8 +6,11 @@ import io.netty.buffer.ByteBuf
 import io.netty.buffer.ByteBufAllocator
 import io.netty.buffer.Unpooled
 import me.albert.netsqueeze.platform.VarInts
+import me.albert.netsqueeze.protocol.ZstdDictionary
+import me.albert.netsqueeze.protocol.ZstdFrameHeader
+import me.albert.netsqueeze.stats.ZstdDictionaryStats
 
-/** 每个大包独立 ZSTD 帧，不接触任何 Deflate 字典。窗口固定最多 8 MiB。 */
+/** Independent ZSTD frames; the optional raw dictionary belongs to one negotiated connection. */
 internal object ZstdFrame {
     const val MARKER: Byte = 1
     const val MAX_INPUT = 8 * 1024 * 1024
@@ -23,11 +26,27 @@ internal object ZstdFrame {
         } catch (_: LinkageError) { false
         } catch (_: RuntimeException) { false }
     }
-
+    private val dictionaryNativeAvailable: Boolean by lazy {
+        try {
+            val raw = ByteArray(24 * 1024).also { java.util.Random(739016).nextBytes(it) }
+            ZstdDictionary().use { dictionary ->
+                dictionary.update(raw)
+                val compressed = ZstdCompressCtx().use { ctx ->
+                    configure(ctx, 1).loadDict(dictionary.content()).compress(raw)
+                }
+                ZstdDecompressCtx().use { ctx ->
+                    ctx.loadDict(dictionary.content())
+                    ctx.decompress(compressed, raw.size).contentEquals(raw)
+                }
+            }
+        } catch (_: LinkageError) { false
+        } catch (_: RuntimeException) { false }
+    }
     fun available(): Boolean = !java.lang.Boolean.getBoolean("netsqueeze.zstd.disable") && nativeAvailable
+    fun dictionaryAvailable(): Boolean = available() && dictionaryNativeAvailable
 
-    /** null 表示不比 raw 包帧更小；尚未推进共享字典，调用者可安全回退 Deflate。 */
-    fun encode(alloc: ByteBufAllocator, packet: ByteBuf, level: Int): ByteBuf? {
+    /** null never mutates either dictionary. Only actual selected ZSTD frames advance history. */
+    fun encode(alloc: ByteBufAllocator, packet: ByteBuf, level: Int, dictionary: ZstdDictionary? = null): ByteBuf? {
         val packetLength = packet.readableBytes()
         require(packetLength in 1..MAX_INPUT)
         val raw = ByteArray(VarInts.getByteSize(packetLength) + packetLength)
@@ -36,44 +55,59 @@ internal object ZstdFrame {
             VarInts.write(rawBuf, packetLength)
             packet.getBytes(packet.readerIndex(), raw, rawBuf.writerIndex(), packetLength)
         } finally { rawBuf.release() }
-
-        val compressed = try {
-            val ctx = ZstdCompressCtx()
-            try {
-                ctx.setLevel(level).setWindowLog(WINDOW_LOG).setContentSize(true).setChecksum(true)
-                ctx.compress(raw)
-            } finally { ctx.close() }
-        } catch (_: LinkageError) { return null }
-          catch (_: RuntimeException) { return null }
-        if (compressed.size + 1 >= raw.size) return null
-        require(compressed.size <= MAX_COMPRESSED) { "ZSTD 压缩帧超过上限" }
-        val bodyLength = 1 + compressed.size
-        val out = alloc.directBuffer(VarInts.MAX_VARINT_SIZE + bodyLength)
+        val ctx = try { ZstdCompressCtx() }
+            catch (_: LinkageError) { return null }
+            catch (_: RuntimeException) { return null }
         try {
-            VarInts.write(out, bodyLength)
-            out.writeByte(MARKER.toInt())
-            out.writeBytes(compressed)
-            return out
-        } catch (e: Throwable) {
-            out.release()
-            throw e
-        }
+            val independent = try { configure(ctx, level).compress(raw) }
+                catch (_: LinkageError) { return null }
+                catch (_: RuntimeException) { return null }
+            // A comparison owns ONE native context, released before returning this frame.
+            // Independent compression runs first, so no previous dictionary can leak into it.
+            val selectedDictionary = if (dictionary?.ready() == true && dictionaryCanWin(independent.size)) {
+                val trial = try { ctx.loadDict(dictionary.content()).compress(raw) }
+                    catch (_: LinkageError) { null }
+                    catch (_: RuntimeException) { null }
+                trial?.takeIf { it.size + ZstdDictionary.HASH_BYTES + MIN_DICTIONARY_SAVING <= independent.size }
+            } else null
+            val compressed = selectedDictionary ?: independent
+            val useDictionary = selectedDictionary != null
+            val extra = if (useDictionary) ZstdDictionary.HASH_BYTES else 0
+            if (compressed.size + 1 + extra >= raw.size) return null
+            require(compressed.size <= MAX_COMPRESSED)
+            val bodyLength = 1 + extra + compressed.size
+            val out = alloc.directBuffer(VarInts.MAX_VARINT_SIZE + bodyLength)
+            try {
+                VarInts.write(out, bodyLength)
+                out.writeByte(if (useDictionary) ZstdDictionary.MARKER else MARKER.toInt())
+                if (useDictionary) out.writeBytes(checkNotNull(dictionary).digest())
+                out.writeBytes(compressed)
+                dictionary?.update(raw)
+                if (useDictionary) {
+                    ZstdDictionaryStats.frames.increment()
+                    ZstdDictionaryStats.saved.add((independent.size - compressed.size - extra).toLong())
+                }
+                return out
+            } catch (e: Throwable) { out.release(); throw e }
+        } finally { ctx.close() }
     }
+    private const val MIN_DICTIONARY_SAVING = 64
 
-    /** Header content-size 校验与 8 MiB 窗口上限，避免尺寸声明和窗口 bomb。 */
+    /** Necessary bound, not a heuristic: even a zero-byte trial cannot win below this. */
+    internal fun dictionaryCanWin(independentBytes: Int): Boolean =
+        independentBytes >= ZstdDictionary.HASH_BYTES + MIN_DICTIONARY_SAVING
+
+    private fun configure(ctx: ZstdCompressCtx, level: Int): ZstdCompressCtx =
+        ctx.setLevel(level).setWindowLog(WINDOW_LOG).setContentSize(true).setChecksum(true)
+    /** Test helper for ordinary independent frames. Production client uses the same Java header check. */
     fun decode(compressed: ByteArray): ByteArray {
-        require(compressed.isNotEmpty() && compressed.size <= MAX_COMPRESSED) { "ZSTD 压缩帧长度无效" }
-        val frameBytes = com.github.luben.zstd.Zstd.findFrameCompressedSize(compressed)
-        require(frameBytes == compressed.size.toLong()) { "ZSTD 帧包含尾随数据" }
-        val contentBytes = com.github.luben.zstd.Zstd.getFrameContentSize(compressed)
-        require(!com.github.luben.zstd.Zstd.isError(contentBytes) && contentBytes in 1..(MAX_INPUT + VarInts.MAX_VARINT_SIZE).toLong()) {
-            "ZSTD 解压长度无效: $contentBytes"
-        }
+        val header = ZstdFrameHeader.validate(compressed)
+        require(com.github.luben.zstd.Zstd.findFrameCompressedSize(compressed) == compressed.size.toLong())
+        require(com.github.luben.zstd.Zstd.getFrameContentSize(compressed) == header.contentSize().toLong())
         val ctx = ZstdDecompressCtx()
         try {
-            ctx.setLongMax(WINDOW_LOG)
-            val output = ctx.decompress(compressed, contentBytes.toInt())
-            require(output.size.toLong() == contentBytes) { "ZSTD 解压长度不匹配" }
+            val output = ctx.decompress(compressed, header.contentSize())
+            require(output.size == header.contentSize())
             return output
         } finally { ctx.close() }
     }

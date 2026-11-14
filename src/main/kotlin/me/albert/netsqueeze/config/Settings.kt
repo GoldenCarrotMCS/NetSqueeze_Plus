@@ -13,6 +13,7 @@ internal data class Settings(
     val zstdMinPacketBytes: Int = 64 * 1024,
     val zstdLevel: Int = 1,
     val zstdEnabled: Boolean = true,
+    val zstdDictionaryEnabled: Boolean = true,
     val chunkCacheEnabled: Boolean = false,
     val chunkCacheNamespace: String = "00000000-0000-0000-0000-000000000000",
     val chunkCacheEpoch: Int = 0
@@ -31,7 +32,7 @@ internal data class Settings(
 
     companion object {
         fun load(config: FileConfiguration): Settings {
-            for (key in listOf("enabled", "log-first-failure", "zstd-enabled", "chunk-cache-enabled")) {
+            for (key in listOf("enabled", "log-first-failure", "zstd-enabled", "zstd-dictionary-enabled", "chunk-cache-enabled")) {
                 require(!config.contains(key) || config.isBoolean(key)) { "$key 必须是布尔值 true/false" }
             }
             for (key in listOf("compression-level", "max-frame-raw-bytes", "tunnel-min-packet-bytes", "zstd-min-packet-bytes", "zstd-level", "chunk-cache-epoch")) {
@@ -47,6 +48,7 @@ internal data class Settings(
                 zstdMinPacketBytes = config.getInt("zstd-min-packet-bytes", 64 * 1024),
                 zstdLevel = config.getInt("zstd-level", 1),
                 zstdEnabled = config.getBoolean("zstd-enabled", true),
+                zstdDictionaryEnabled = config.getBoolean("zstd-dictionary-enabled", true),
                 chunkCacheEnabled = config.getBoolean("chunk-cache-enabled", false),
                 chunkCacheNamespace = config.getString("chunk-cache-namespace", "00000000-0000-0000-0000-000000000000")!!,
                 chunkCacheEpoch = config.getInt("chunk-cache-epoch", 0)

@@ -26,6 +26,8 @@ public final class NetSqueezeClient {
     public static final Logger LOGGER = LoggerFactory.getLogger("NetSqueeze");
 
     static final int VERSION = 3;
+    static final Identifier HELLO_DICT = Identifier.fromNamespaceAndPath("netsqueeze", me.albert.netsqueeze.protocol.DictionaryProtocol.HELLO);
+    static final Identifier ENABLE_DICT = Identifier.fromNamespaceAndPath("netsqueeze", me.albert.netsqueeze.protocol.DictionaryProtocol.ENABLE);
 
     static final Identifier HELLO = Identifier.fromNamespaceAndPath("netsqueeze", "hello_v" + VERSION);
 
@@ -74,6 +76,7 @@ public final class NetSqueezeClient {
     public static void sendHello(final Connection connection) {
         final Channel channel = ((ConnectionAccessor) connection).netsqueeze$getChannel();
         if (channel == null || channel.pipeline().get(StreamDecoder.NAME) == null) return;
+        if (ZstdDictionarySupport.available()) connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(HELLO_DICT)));
         connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(ZstdSupport.available() ? HELLO_ZSTD : HELLO)));
         // Old servers ignore the first hello and negotiate their unchanged v1 format.
         connection.send(new ServerboundCustomPayloadPacket(new DiscardedPayload(LEGACY_HELLO)));

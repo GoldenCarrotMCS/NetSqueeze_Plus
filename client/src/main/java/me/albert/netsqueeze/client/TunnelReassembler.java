@@ -14,6 +14,7 @@ final class TunnelReassembler implements AutoCloseable {
     final UUID session;
     private final FrameInflater inflater;
     final boolean cache;
+    final boolean dictionary;
     final boolean markedFrames;
     final boolean zstdEnabled;
     private ByteBuf pending;
@@ -24,8 +25,13 @@ final class TunnelReassembler implements AutoCloseable {
 
     TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled) { this(session, markedFrames, zstdEnabled, false); }
 
-    TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled, boolean cache) {
+    TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled, boolean cache) { this(session, markedFrames, zstdEnabled, cache, false); }
+
+    TunnelReassembler(UUID session, boolean markedFrames, boolean zstdEnabled, boolean cache, boolean dictionary) {
+        if (dictionary && (!markedFrames || !zstdEnabled)) throw new IllegalArgumentException("Dictionary requires ZSTD");
+        this.dictionary = dictionary;
         this.inflater = new FrameInflater(cache);
+        if (dictionary) this.inflater.enableDictionary();
         this.cache = cache;
         this.session = session;
         this.markedFrames = markedFrames;

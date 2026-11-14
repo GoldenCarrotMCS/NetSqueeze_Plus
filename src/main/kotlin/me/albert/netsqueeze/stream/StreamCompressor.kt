@@ -7,6 +7,7 @@ import io.netty.channel.ChannelOutboundHandlerAdapter
 import io.netty.channel.ChannelPromise
 import io.netty.util.ReferenceCountUtil
 import io.netty.util.concurrent.PromiseNotifier
+import me.albert.netsqueeze.protocol.ZstdDictionary
 import me.albert.netsqueeze.stats.PlayerTally
 import me.albert.netsqueeze.stats.StreamStats
 import me.albert.netsqueeze.platform.NetworkNames as HandlerNames
@@ -28,7 +29,8 @@ internal class StreamCompressor(
     private val useZstd: Boolean = false,
     private val zstdMinPacketBytes: Int = 64 * 1024,
     private val zstdLevel: Int = 1,
-    private val markedFrames: Boolean = true
+    private val markedFrames: Boolean = true,
+    useDictionary: Boolean = false
 ) : ChannelOutboundHandlerAdapter() {
 
     /** 配置阶段切换时还不知道是谁,进服后由 Injector 绑上 */
@@ -39,6 +41,7 @@ internal class StreamCompressor(
     private val promises = ArrayList<ChannelPromise>()
     private var pendingNanos = 0L
     private var closed = false
+    private val dictionary = if (useDictionary && useZstd && markedFrames) ZstdDictionary() else null
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
         deflater = FrameDeflater(ctx.alloc(), compressionLevel, markedFrames)
@@ -110,6 +113,7 @@ internal class StreamCompressor(
         if (closed) return
         closed = true
         deflater.close()
+        dictionary?.close()
         failPromises(ClosedChannelException())
     }
 
@@ -148,7 +152,7 @@ internal class StreamCompressor(
             "NetSqueeze prepender disappeared"
         }
         val started = System.nanoTime()
-        val frame = ZstdFrame.encode(ctx.alloc(), msg, zstdLevel) ?: return false
+        val frame = ZstdFrame.encode(ctx.alloc(), msg, zstdLevel, dictionary) ?: return false
         val raw = VarInt.getByteSize(msg.readableBytes()).toLong() + msg.readableBytes()
         val frameBytes = frame.readableBytes().toLong()
         val promise = ctx.newPromise()
@@ -179,6 +183,7 @@ internal class StreamCompressor(
         if (closed) return
         closed = true
         deflater.close()
+        dictionary?.close()
         failPromises(e)
         StreamStats.recordFailure(tally?.name ?: ctx.channel().remoteAddress().toString(), e)
         ctx.channel().close()

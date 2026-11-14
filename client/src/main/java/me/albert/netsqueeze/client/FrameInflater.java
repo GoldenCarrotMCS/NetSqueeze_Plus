@@ -8,6 +8,7 @@ import java.util.function.Consumer;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 import net.minecraft.network.CompressionDecoder;
+import me.albert.netsqueeze.protocol.ZstdDictionary;
 
 /** 两种算法共用有界帧解压器；output 接管每个 ByteBuf 的所有权。 */
 final class FrameInflater implements AutoCloseable {
@@ -17,6 +18,11 @@ final class FrameInflater implements AutoCloseable {
     private static final int ZSTD_MARKER = 1;
     private final Inflater inflater = new Inflater(true);
     private boolean closed;
+    private ZstdDictionary dictionary;
+    void enableDictionary() {
+        if (closed) throw new IllegalStateException("Inflater closed");
+        if (dictionary == null) dictionary = new ZstdDictionary();
+    }
     private final int extraBytes;
     FrameInflater() { this(false); }
     FrameInflater(boolean cache) { extraBytes = cache ? 1 : 0; }
@@ -30,21 +36,32 @@ final class FrameInflater implements AutoCloseable {
             return;
         }
         int marker = frame.readUnsignedByte();
-        if (marker == ZSTD_MARKER) {
+        if (marker == ZSTD_MARKER || marker == ZstdDictionary.MARKER) {
             if (!allowZstd) throw new CorruptedFrameException("未协商 ZSTD，但收到 ZSTD 帧");
-            decodeZstd(frame, output);
+            boolean withDictionary = marker == ZstdDictionary.MARKER;
+            if (withDictionary && dictionary == null) throw new CorruptedFrameException("ZSTD dictionary not negotiated");
+            decodeZstd(frame, output, withDictionary);
             return;
         }
         if (marker != DEFLATE_MARKER) throw new CorruptedFrameException("NetSqueeze 未知压缩算法");
         decodeDeflate(alloc, frame, output);
     }
 
-    private void decodeZstd(ByteBuf frame, Consumer<ByteBuf> output) {
+    private void decodeZstd(ByteBuf frame, Consumer<ByteBuf> output, boolean withDictionary) {
+        if (withDictionary) {
+            if (frame.readableBytes() <= ZstdDictionary.HASH_BYTES)
+                throw new CorruptedFrameException("Truncated ZSTD dictionary digest");
+            byte[] expected = new byte[ZstdDictionary.HASH_BYTES];
+            frame.readBytes(expected);
+            try { dictionary.verify(expected); }
+            catch (IllegalArgumentException e) { throw new CorruptedFrameException("ZSTD dictionary out of sync", e); }
+        }
         byte[] compressed = new byte[frame.readableBytes()];
         frame.readBytes(compressed);
         final byte[] raw;
         try {
-            raw = ZstdFrameDecoder.decode(compressed);
+            raw = ZstdFrameDecoder.decode(compressed, withDictionary ? dictionary.content() : null);
+            if (dictionary != null) dictionary.update(raw);
         } catch (RuntimeException e) {
             throw new CorruptedFrameException("NetSqueeze ZSTD 解压失败", e);
         }
@@ -105,6 +122,6 @@ final class FrameInflater implements AutoCloseable {
     }
 
     @Override public void close() {
-        if (!closed) { closed = true; inflater.end(); }
+        if (!closed) { closed = true; inflater.end(); if (dictionary != null) dictionary.close(); }
     }
 }

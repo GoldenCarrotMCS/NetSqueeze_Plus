@@ -3,7 +3,8 @@ package me.albert.netsqueeze.protocol;
 /**
  * Checks the frame's memory requirements before invoking JNI. No native dependency.
  * Format: facebook/zstd/doc/zstd_compression_format.md, Frame_Header.
- * NetSqueeze sends standard, content-sized frames without external dictionaries.
+ * NetSqueeze uses standard, content-sized frames without trained dictionary IDs.
+ * Negotiated raw-content dictionaries are verified by an outer SHA-256 envelope.
  */
 public final class ZstdFrameHeader {
     public static final long MAX_WINDOW = 8L * 1024 * 1024;

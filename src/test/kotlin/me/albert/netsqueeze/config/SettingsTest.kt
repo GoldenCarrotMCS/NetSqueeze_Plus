@@ -8,6 +8,7 @@ class SettingsTest {
     @Test
     fun `defaults and explicit settings load`() {
         assertEquals(Settings(), Settings.load(YamlConfiguration()))
+        assertTrue(Settings().zstdDictionaryEnabled)
         val config = YamlConfiguration()
         config.set("compression-level", 9)
         config.set("enabled", false)
@@ -56,4 +57,12 @@ class SettingsTest {
         yaml.set("zstd-enabled", false)
         assertFalse(Settings.load(yaml).zstdEnabled)
     }
+    @Test fun `dictionary configuration requires a boolean`() {
+        val yaml = YamlConfiguration()
+        yaml.set("zstd-dictionary-enabled", "yes")
+        assertFailsWith<IllegalArgumentException> { Settings.load(yaml) }
+        yaml.set("zstd-dictionary-enabled", false)
+        assertFalse(Settings.load(yaml).zstdDictionaryEnabled)
+    }
+
 }

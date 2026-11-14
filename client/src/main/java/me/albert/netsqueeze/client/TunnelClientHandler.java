@@ -8,6 +8,7 @@ import io.netty.handler.codec.CorruptedFrameException;
 import me.albert.netsqueeze.client.mixin.PacketDecoderAccessor;
 import me.albert.netsqueeze.protocol.ChunkCacheProtocol;
 import me.albert.netsqueeze.protocol.SnapshotCodec;
+import me.albert.netsqueeze.protocol.DictionaryProtocol;
 import me.albert.netsqueeze.protocol.TunnelProtocol;
 import me.albert.netsqueeze.protocol.MinecraftVersions;
 import net.minecraft.SharedConstants;
@@ -46,43 +47,47 @@ final class TunnelClientHandler extends ChannelInboundHandlerAdapter {
             ctx.fireChannelRead(msg); return;
         }
         try {
-            if (payload.id().equals(TunnelPayload.CACHE_OFFER)) {
-                ChunkCacheProtocol.Offer offer = ChunkCacheProtocol.offer(payload.data());
-                if (!eligible(ctx, offer.protocol())) return;
+            if (payload.id().equals(TunnelPayload.DICTIONARY_OFFER)) {
+                DictionaryProtocol.Offer modern = DictionaryProtocol.decode(payload.data());
+                ChunkCacheProtocol.Offer offer = modern.base();
+                if (!eligible(ctx, offer.protocol()) || !ZstdDictionarySupport.available()) return;
                 if (receiver != null) {
-                    if (receiver.cache && receiver.session.equals(offer.session())) ack(ctx, ChunkCacheProtocol.ack(receiver.session, offer.protocol(), receiver.zstdEnabled));
+                    if (receiver.dictionary && receiver.session.equals(offer.session()))
+                        ack(ctx, DictionaryProtocol.ack(receiver.session, offer.protocol(), receiver.cache));
                     return;
                 }
                 if (preparing != null) return;
-                preparing = offer.session(); long token = ++generation;
-                // No ACK until disk seeds are pinned. Original traffic continues during preparation.
-                prepareTimeout = ctx.executor().schedule(() -> {
-                    if (generation == token && preparing != null) {
-                        preparing = null; generation++;
-                        beginLegacy(ctx, offer.session(), true, offer.zstd());
-                    }
-                }, 2, TimeUnit.SECONDS);
-                Minecraft.getInstance().execute(() -> ClientChunkCache.prepare(offer, prepared -> {
-                    try { ctx.executor().execute(() -> complete(ctx, offer, prepared, token)); }
-                    catch (java.util.concurrent.RejectedExecutionException ignored) { }
-                }));
+                if (modern.cache()) requestCache(ctx, offer, true);
+                else beginDictionary(ctx, offer);
+            } else if (payload.id().equals(TunnelPayload.CACHE_OFFER)) {
+                ChunkCacheProtocol.Offer offer = ChunkCacheProtocol.offer(payload.data());
+                if (!eligible(ctx, offer.protocol())) return;
+                if (receiver != null) {
+                    if (!receiver.dictionary && receiver.cache && receiver.session.equals(offer.session()))
+                        ack(ctx, ChunkCacheProtocol.ack(receiver.session, offer.protocol(), receiver.zstdEnabled));
+                    return;
+                }
+                if (preparing != null) return;
+                requestCache(ctx, offer, false);
             } else if (payload.id().equals(TunnelPayload.OFFER) || payload.id().equals(TunnelPayload.LEGACY_OFFER)) {
                 TunnelProtocol.Offer offer = TunnelProtocol.decodeOffer(payload.data());
                 boolean marked = payload.id().equals(TunnelPayload.OFFER);
                 if (offer.markedFrames() != marked) throw new CorruptedFrameException("Tunnel offer channel/format mismatch");
                 if (preparing != null) return;
                 if (receiver != null) {
-                    if (!receiver.cache && receiver.session.equals(offer.session()) && receiver.markedFrames == marked)
+                    if (!receiver.dictionary && !receiver.cache && receiver.session.equals(offer.session()) && receiver.markedFrames == marked)
                         ack(ctx, TunnelProtocol.ackPath(receiver.session, offer.protocol(), marked, receiver.zstdEnabled));
                     return;
                 }
                 if (eligible(ctx, offer.protocol())) beginLegacy(ctx, offer.session(), marked, offer.zstd());
-            } else if (payload.id().equals(TunnelPayload.STOP) || payload.id().equals(TunnelPayload.LEGACY_STOP) || payload.id().equals(TunnelPayload.CACHE_STOP)) {
-                if (receiver != null && receiver.session.equals(session(payload.data())) &&
-                        receiver.cache == payload.id().equals(TunnelPayload.CACHE_STOP) &&
-                        (receiver.cache || receiver.markedFrames == payload.id().equals(TunnelPayload.STOP))) reset();
+            } else if (payload.id().equals(TunnelPayload.STOP) || payload.id().equals(TunnelPayload.LEGACY_STOP) ||
+                    payload.id().equals(TunnelPayload.CACHE_STOP) || payload.id().equals(TunnelPayload.DICTIONARY_STOP)) {
+                if (receiver != null && receiver.session.equals(session(payload.data()))) {
+                    Identifier expected = receiver.dictionary ? TunnelPayload.DICTIONARY_STOP : receiver.cache ? TunnelPayload.CACHE_STOP : receiver.markedFrames ? TunnelPayload.STOP : TunnelPayload.LEGACY_STOP;
+                    if (payload.id().equals(expected)) reset();
+                }
             } else if (receiver != null) {
-                Identifier expected = receiver.cache ? TunnelPayload.CACHE_DATA : receiver.markedFrames ? TunnelPayload.DATA : TunnelPayload.LEGACY_DATA;
+                Identifier expected = receiver.dictionary ? TunnelPayload.DICTIONARY_DATA : receiver.cache ? TunnelPayload.CACHE_DATA : receiver.markedFrames ? TunnelPayload.DATA : TunnelPayload.LEGACY_DATA;
                 if (!payload.id().equals(expected)) throw new CorruptedFrameException("Tunnel data channel differs from negotiated format");
                 receiver.accept(ctx.alloc(), payload.data(), bytes -> decodeInner(ctx, bytes));
             }
@@ -90,26 +95,49 @@ final class TunnelClientHandler extends ChannelInboundHandlerAdapter {
             reset(); ctx.close(); throw e;
         }
     }
-    private void complete(ChannelHandlerContext ctx, ChunkCacheProtocol.Offer offer, ClientChunkCache.Prepared prepared, long token) {
+    private void requestCache(ChannelHandlerContext ctx, ChunkCacheProtocol.Offer offer, boolean dictionary) {
+        preparing = offer.session(); long token = ++generation;
+        prepareTimeout = ctx.executor().schedule(() -> {
+            if (generation == token && preparing != null) {
+                preparing = null; generation++;
+                if (dictionary) beginDictionary(ctx, offer); else beginLegacy(ctx, offer.session(), true, offer.zstd());
+            }
+        }, 2, TimeUnit.SECONDS);
+        Minecraft.getInstance().execute(() -> ClientChunkCache.prepare(offer, prepared -> {
+            try { ctx.executor().execute(() -> complete(ctx, offer, prepared, token, dictionary)); }
+            catch (java.util.concurrent.RejectedExecutionException ignored) { }
+        }));
+    }
+    private void beginDictionary(ChannelHandlerContext ctx, ChunkCacheProtocol.Offer offer) {
+        if (receiver != null || !ctx.channel().isActive()) return;
+        receiver = new TunnelReassembler(offer.session(), true, true, false, true);
+        ack(ctx, DictionaryProtocol.ack(offer.session(), offer.protocol(), false));
+        NetSqueezeClient.LOGGER.info("GoldenCarrot隧道已协商：ZSTD=true，dictionary=true，持久区块缓存=false");
+    }
+    private void complete(ChannelHandlerContext ctx, ChunkCacheProtocol.Offer offer, ClientChunkCache.Prepared prepared, long token, boolean dictionary) {
         if (generation != token || preparing == null || !ctx.channel().isActive()) return;
         if (prepareTimeout != null) prepareTimeout.cancel(false);
         prepareTimeout = null; preparing = null;
-        if (prepared == null || !ClientChunkCache.valid(prepared)) { beginLegacy(ctx, offer.session(), true, offer.zstd()); return; }
+        if (prepared == null || !ClientChunkCache.valid(prepared)) {
+            if (dictionary) beginDictionary(ctx, offer); else beginLegacy(ctx, offer.session(), true, offer.zstd());
+            return;
+        }
         boolean useZstd = offer.zstd() && ZstdSupport.available();
-        receiver = new TunnelReassembler(offer.session(), true, useZstd, true);
+        receiver = new TunnelReassembler(offer.session(), true, useZstd, true, dictionary);
         snapshots = new SnapshotCodec();
         disk = ClientChunkCache.activate(prepared);
         for (byte[] seed : prepared.seeds()) snapshots.pin(seed);
-        ack(ctx, ChunkCacheProtocol.ack(offer.session(), offer.protocol(), useZstd));
+        ack(ctx, dictionary ? DictionaryProtocol.ack(offer.session(), offer.protocol(), true) : ChunkCacheProtocol.ack(offer.session(), offer.protocol(), useZstd));
         for (byte[] seed : prepared.seeds()) ack(ctx, ChunkCacheProtocol.seed(offer.session(), ChunkCacheProtocol.hash(seed)));
-        ClientChunkCache.message("区块缓存 v4 已协商；种子 " + prepared.seeds().size() + " 个。未变复用、小变化补丁、其他完整发送。/nsqcache deny 可撤回磁盘授权。");
+        NetSqueezeClient.LOGGER.info("ZSTD dictionary negotiated: {}", dictionary);
+        ClientChunkCache.message("区块缓存 已协商；种子 " + prepared.seeds().size() + " 个。未变复用、小变化补丁、其他完整发送。/nsqcache deny 可撤回磁盘授权。");
     }
     private void beginLegacy(ChannelHandlerContext ctx, UUID session, boolean marked, boolean zstd) {
         if (receiver != null || !ctx.channel().isActive()) return;
         boolean useZstd = marked && zstd && ZstdSupport.available();
         receiver = new TunnelReassembler(session, marked, useZstd);
         ack(ctx, TunnelProtocol.ackPath(session, SharedConstants.getProtocolVersion(), marked, useZstd));
-        NetSqueezeClient.LOGGER.info("GoldenCarrot服务器兼容隧道已协商，ZSTD={}，持久区块缓存=false", useZstd);
+        NetSqueezeClient.LOGGER.info("GoldenCarrot服务器兼容隧道已协商，ZSTD={}，dictionary=false，持久区块缓存=false", useZstd);
     }
     private static void ack(ChannelHandlerContext ctx, String path) {
         Identifier id = Identifier.fromNamespaceAndPath("netsqueeze", path);

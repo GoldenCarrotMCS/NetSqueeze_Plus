@@ -9,11 +9,11 @@ internal class HelloHandler : ChannelInboundHandlerAdapter() {
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         val id = ServerNetwork.packetAccess().payloadId(msg)
         val legacy = id == Protocol.LEGACY_HELLO
-        if (!legacy && id != Protocol.HELLO && id != Protocol.HELLO_ZSTD) {
+        if (!legacy && id != Protocol.HELLO && id != Protocol.HELLO_ZSTD && id != Protocol.HELLO_DICT) {
             ctx.fireChannelRead(msg)
             return
         }
         ctx.pipeline().remove(this)
-        Injector.enableStream(ctx.channel(), id == Protocol.HELLO_ZSTD, !legacy)
+        Injector.enableStream(ctx.channel(), id == Protocol.HELLO_ZSTD || id == Protocol.HELLO_DICT, !legacy, id == Protocol.HELLO_DICT)
     }
 }

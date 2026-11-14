@@ -29,6 +29,7 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
             StreamStats.reset()
             TunnelStats.reset()
             ChunkCacheStats.reset()
+            ZstdDictionaryStats.reset()
             sender.sendMessage("§a统计已清零§7，压缩上下文不动，跑几分钟后 §f/nsq §7看结果")
             return true
         }
@@ -68,7 +69,8 @@ internal object StatsCommand : CommandExecutor, TabCompleter {
                 "§7，人均 §f${kbps(wire + wireHeaders, seconds, vanilla)}"
         )
 
-        sender.sendMessage("§7区块缓存 v4：完整 §f${ChunkCacheStats.full.sum()}§7，命中 §f${ChunkCacheStats.hits.sum()}§7，补丁 §f${ChunkCacheStats.patches.sum()}§7；选择次数，不是 VC 出口节省。")
+        sender.sendMessage("§7区块缓存：完整 §f${ChunkCacheStats.full.sum()}§7，命中 §f${ChunkCacheStats.hits.sum()}§7，补丁 §f${ChunkCacheStats.patches.sum()}§7；选择次数，不是 VC 出口节省。")
+        sender.sendMessage("§7ZSTD 字典帧 §f${ZstdDictionaryStats.frames.sum()}§7，较同包独立 ZSTD 压缩体累计少 §f${size(ZstdDictionaryStats.saved.sum())}§7（含字典摘要开销，非 VC 出口实测）。")
         val s = StreamStats
         val raw = s.raw.sum()
         if (tunnel > 0 || TunnelStats.raw.sum() > 0) {

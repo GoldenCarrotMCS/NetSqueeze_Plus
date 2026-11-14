@@ -294,3 +294,11 @@ NetSqueeze 是独立实现，没有用它的代码。
 ### 整合包中 ZSTD 无法启用的排查
 
 `ZstdDecompressCtx.setLongMax(int)` 的 `NoSuchMethodError` 表示其他模组提供的旧 ZSTD Java 类与编译时 API 不一致，并非一定是原生库提取失败；只改 `zstd-enabled` 和重启不会补齐这个方法。源码兼容修复改为 JNI 前校验帧头窗口与大小，并用实际解码路径做探测，不要求删除 Axiom/Miku-ZSTD。构建与真实整合包验证状态见 [ZSTD 兼容说明](docs/ZSTD-COMPATIBILITY.md)。
+
+### 每连接 ZSTD 字典（1.6.0）
+
+新增 `zstd-dictionary-enabled: true`；仅双方都支持且协商成功时启用，不改变原有 64 KiB 大包门槛及小包算法。上一条成功的 ZSTD 包派生最多 64 KiB 的内存字典，不写盘、不发送训练样本、不同玩家和后端会话不共享。独立 ZSTD、字典 ZSTD 比较后择优，缺少历史或收益不足保留原路径。
+
+直连使用新的 hello/enable，隧道 v5 明确声明是否带区块缓存信封；旧 v1/v2/v3/v4 仍可降级。字典无需启用区块磁盘缓存或额外安装 VC 插件。客户端日志 `dictionary=true` 表示协商，`/nsq` 字典帧增长才是实际选中。指标是压缩体比较，不是 VC 出口节省。比较两种编码会增加 CPU，未知场景收益需自行测量。
+
+实现、安全边界和未执行的验收见 [ZSTD 字典说明](docs/ZSTD-DICTIONARY.md)。

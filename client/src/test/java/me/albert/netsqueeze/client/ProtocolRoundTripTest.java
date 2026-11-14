@@ -27,6 +27,10 @@ class ProtocolRoundTripTest {
     private static EmbeddedChannel channel(boolean decompress) { return channel(decompress, false, false); }
 
     private static EmbeddedChannel channel(boolean decompress, boolean zstd, boolean legacy) {
+        return channel(decompress, legacy ? NetSqueezeClient.LEGACY_ENABLE : zstd ? NetSqueezeClient.ENABLE_ZSTD : NetSqueezeClient.ENABLE);
+    }
+
+    static EmbeddedChannel channel(boolean decompress, net.minecraft.resources.Identifier enable) {
         EmbeddedChannel ch = new EmbeddedChannel();
         ch.pipeline().addLast(StreamDecoder.NAME, new StreamDecoder());
         ch.pipeline().addLast(HandlerNames.SPLITTER, new ChannelInboundHandlerAdapter());
@@ -41,7 +45,7 @@ class ProtocolRoundTripTest {
                         assertEquals(1, bytes.readUnsignedByte());
                         assertEquals(0x42, bytes.readUnsignedByte());
                     } finally { bytes.release(); }
-                    ctx.fireChannelRead(new ClientboundCustomPayloadPacket(new DiscardedPayload(legacy ? NetSqueezeClient.LEGACY_ENABLE : zstd ? NetSqueezeClient.ENABLE_ZSTD : NetSqueezeClient.ENABLE)));
+                    ctx.fireChannelRead(new ClientboundCustomPayloadPacket(new DiscardedPayload(enable)));
                 } else ctx.fireChannelRead(msg);
             }
         });

@@ -26,3 +26,7 @@ chunk-cache-enabled: false
 chunk-cache-namespace: "00000000-0000-0000-0000-000000000000"
 # 世界重置或数据包/注册表/可见性策略变更后递增。
 chunk-cache-epoch: 0
+
+# 每连接 64 KiB ZSTD 内存字典，仅双方支持时协商；小包和旧端不变。
+# 比较带/不带字典需额外 CPU；可设 false 回到独立 ZSTD。修改后重启。
+zstd-dictionary-enabled: true

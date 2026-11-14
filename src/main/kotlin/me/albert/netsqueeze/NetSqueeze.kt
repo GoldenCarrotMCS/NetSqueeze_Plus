@@ -59,6 +59,7 @@ class NetSqueeze : JavaPlugin() {
         if (settings.zstdEnabled) {
             if (me.albert.netsqueeze.stream.ZstdFrame.available()) {
                 logger.info("大包 ZSTD 就绪：阈值 ${settings.zstdMinPacketBytes} B，级别 ${settings.zstdLevel}；仅协商成功后启用。")
+                logger.info("ZSTD 字典：${settings.zstdDictionaryEnabled && me.albert.netsqueeze.stream.ZstdFrame.dictionaryAvailable()}；每连接内存最多 64 KiB，仅新能力协商后使用。")
             } else {
                 logger.warning("ZSTD 原生库不可用或被系统属性禁用，保留 Deflate；不会声明 ZSTD 能力。")
             }

@@ -22,15 +22,18 @@ final class EnableDetector extends ChannelInboundHandlerAdapter {
         if (msg instanceof ClientboundCustomPayloadPacket packet &&
                 (packet.payload().type().id().equals(NetSqueezeClient.ENABLE) ||
                  packet.payload().type().id().equals(NetSqueezeClient.ENABLE_ZSTD) ||
+                 packet.payload().type().id().equals(NetSqueezeClient.ENABLE_DICT) ||
                  packet.payload().type().id().equals(NetSqueezeClient.LEGACY_ENABLE))) {
-            final boolean zstd = packet.payload().type().id().equals(NetSqueezeClient.ENABLE_ZSTD);
+            final boolean dictionary = packet.payload().type().id().equals(NetSqueezeClient.ENABLE_DICT);
+            final boolean zstd = dictionary || packet.payload().type().id().equals(NetSqueezeClient.ENABLE_ZSTD);
             final StreamDecoder decoder = decoder(ctx);
             ctx.pipeline().remove(this);
             if (decoder == null) {
                 // 不该发生(没解码器就不会发 hello);服务端已经切了,这边解不了,只能断开
                 throw new IllegalStateException("NetSqueeze: 收到 enable 但解码器不在管线里");
             }
-            decoder.enable(!packet.payload().type().id().equals(NetSqueezeClient.LEGACY_ENABLE), zstd);
+            decoder.enable(!packet.payload().type().id().equals(NetSqueezeClient.LEGACY_ENABLE), zstd, dictionary);
+            NetSqueezeClient.LOGGER.info("ZSTD dictionary negotiated: {}", dictionary);
             NetSqueezeClient.LOGGER.info(zstd ? "服务器已启用大包 ZSTD / 小包 Deflate 压缩" : "服务器已启用 Deflate 压缩");
             return;
         }
