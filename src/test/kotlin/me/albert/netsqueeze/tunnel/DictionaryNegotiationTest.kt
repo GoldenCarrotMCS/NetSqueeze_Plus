@@ -86,7 +86,7 @@ class DictionaryNegotiationTest {
         val ch = EmbeddedChannel(bridge, TunnelHandshake(bridge))
         try {
             repeat(101) { index ->
-                val packet = net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket(index)
+                val packet = teleportAck(index)
                 ch.writeInbound(packet)
                 assertSame(packet, ch.readInbound<Any>())
                 val retry = index + 1 in listOf(1, 20, 100)
@@ -98,6 +98,18 @@ class DictionaryNegotiationTest {
             }
             assertFalse(bridge.enabled)
         } finally { ch.finishAndReleaseAll() }
+    }
+    /** 26.3 adds position/rotation to the ACK; the regression concerns dispatch, not that payload. */
+    private fun teleportAck(id: Int): Any {
+        val type = Class.forName("net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket")
+        val legacy = arrayOf<Class<*>>(Integer.TYPE)
+        val modern = arrayOf<Class<*>>(Integer.TYPE, java.lang.Double.TYPE, java.lang.Double.TYPE,
+            java.lang.Double.TYPE, java.lang.Float.TYPE, java.lang.Float.TYPE)
+        val constructor = type.constructors.single {
+            it.parameterTypes.contentEquals(legacy) || it.parameterTypes.contentEquals(modern)
+        }
+        return if (constructor.parameterCount == 1) constructor.newInstance(id)
+        else constructor.newInstance(id, 0.0, 0.0, 0.0, 0f, 0f)
     }
     private fun marker(ch: EmbeddedChannel): Int {
         val packet = ch.readOutbound<ClientboundCustomPayloadPacket>()
